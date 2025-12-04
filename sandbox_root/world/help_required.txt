@@ -1,0 +1,899 @@
+A0 help_numeric helper=A28 gen=1 ma qi?
+A1 help_numeric helper=A10 gen=1 re na cu?
+A2 help_numeric helper=A5 gen=1 ma qi?
+A3 help_numeric helper=A9 gen=1 ma qi?
+A4 help_numeric helper=A29 gen=1 ma qi?
+A2 help_numeric helper=A7 gen=1 ma qi?
+A5 help_numeric helper=A8 gen=1 re na cu?
+A2 help_numeric helper=A28 gen=1 ma qi?
+A7 help_numeric helper=A6 gen=1 re na cu?
+A5 help_numeric helper=A9 gen=1 re na cu?
+A8 help_numeric helper=A21 gen=1 ma qi?
+A3 help_numeric helper=A11 gen=1 ma qi?
+A9 help_numeric helper=A29 gen=1 re na cu?
+A1 help_numeric helper=A8 gen=1 re na cu?
+A10 help_numeric helper=A19 gen=1 re na cu?
+A3 help_numeric helper=A26 gen=1 ma qi?
+A11 help_numeric helper=A27 gen=1 re na cu?
+A12 help_numeric helper=A28 gen=1 ma qi?
+A13 help_numeric helper=A27 gen=1 ma qi?
+A14 help_numeric helper=A22 gen=1 re na cu?
+A15 help_numeric helper=A18 gen=1 re na cu?
+A16 help_numeric helper=A13 gen=1 ma qi?
+A17 help_numeric helper=A2 gen=1 ma qi?
+A15 help_numeric helper=A8 gen=1 re na cu?
+A18 help_numeric helper=A10 gen=1 ma qi?
+A10 help_numeric helper=A23 gen=1 re na cu?
+A19 help_numeric helper=A26 gen=1 re na cu?
+A20 help_numeric helper=A11 gen=1 ma qi?
+A8 help_numeric helper=A1 gen=1 ma qi?
+A21 help_numeric helper=A17 gen=1 ma qi?
+A14 help_numeric helper=A7 gen=1 re na cu?
+A22 help_numeric helper=A13 gen=1 re na cu?
+A10 help_numeric helper=A1 gen=1 re na cu?
+A23 help_numeric helper=A0 gen=1 ma qi?
+A24 help_numeric helper=A10 gen=1 ma qi?
+A25 help_numeric helper=A22 gen=1 ma qi?
+A19 help_numeric helper=A19 gen=1 re na cu?
+A26 help_numeric helper=A23 gen=1 ma qi?
+A13 help_numeric helper=A28 gen=1 ma qi?
+A13 help_numeric helper=A6 gen=1 ma qi?
+A28 help_numeric helper=A0 gen=1 re na cu?
+A29 help_numeric helper=A8 gen=1 ma qi?
+A0 help_numeric helper=A28 gen=2 si ra?
+A1 help_numeric helper=A25 gen=2 si ra?
+A3 help_numeric helper=A4 gen=2 pa me?
+A3 help_numeric helper=A7 gen=2 pa me?
+A4 help_numeric helper=A25 gen=2 pa me?
+A5 help_numeric helper=A2 gen=2 pa me?
+A6 help_numeric helper=A18 gen=2 pa me?
+A3 help_numeric helper=A15 gen=2 pa me?
+A7 help_numeric helper=A1 gen=2 pa me?
+A8 help_numeric helper=A1 gen=2 si ra?
+A9 help_numeric helper=A24 gen=2 pa me?
+A10 help_numeric helper=A4 gen=2 si ra?
+A11 help_numeric helper=A16 gen=2 pa me?
+A13 help_numeric helper=A0 gen=2 si ra?
+A14 help_numeric helper=A19 gen=2 pa me?
+A3 help_numeric helper=A7 gen=2 pa me?
+A15 help_numeric helper=A21 gen=2 pa me?
+A11 help_numeric helper=A27 gen=2 pa me?
+A16 help_numeric helper=A4 gen=2 si ra?
+A17 help_numeric helper=A14 gen=2 pa me?
+A6 help_numeric helper=A7 gen=2 pa me?
+A18 help_numeric helper=A3 gen=2 si ra?
+A14 help_numeric helper=A11 gen=2 pa me?
+A19 help_numeric helper=A13 gen=2 pa me?
+A20 help_numeric helper=A2 gen=2 si ra?
+A15 help_numeric helper=A14 gen=2 pa me?
+A21 help_numeric helper=A8 gen=2 si ra?
+A22 help_numeric helper=A11 gen=2 si ra?
+A23 help_numeric helper=A8 gen=2 si ra?
+A9 help_numeric helper=A19 gen=2 pa me?
+A24 help_numeric helper=A6 gen=2 pa me?
+A25 help_numeric helper=A19 gen=2 si ra?
+A26 help_numeric helper=A11 gen=2 pa me?
+A11 help_numeric helper=A4 gen=2 pa me?
+A27 help_numeric helper=A4 gen=2 pa me?
+A28 help_numeric helper=A21 gen=2 si ra?
+A29 help_numeric helper=A5 gen=2 si ra?
+A12 help_numeric helper=A4 gen=2 si ra?
+A1 help_numeric helper=A3 gen=3 ge xi?
+A1 help_numeric helper=A17 gen=3 ge xi?
+A4 help_numeric helper=A26 gen=3 ge xi?
+A5 help_numeric helper=A9 gen=3 ge xi?
+A6 help_numeric helper=A5 gen=3 ge xi?
+A7 help_numeric helper=A6 gen=3 ge xi?
+A8 help_numeric helper=A16 gen=3 ge xi?
+A5 help_numeric helper=A11 gen=3 ge xi?
+A9 help_numeric helper=A16 gen=3 ge xi?
+A10 help_numeric helper=A7 gen=3 ge xi?
+A5 help_numeric helper=A25 gen=3 ge xi?
+A11 help_numeric helper=A17 gen=3 ge xi?
+A13 help_numeric helper=A9 gen=3 ge xi?
+A14 help_numeric helper=A19 gen=3 ge xi?
+A15 help_numeric helper=A21 gen=3 ge xi?
+A8 help_numeric helper=A18 gen=3 ge xi?
+A16 help_numeric helper=A8 gen=3 ge xi?
+A1 help_numeric helper=A27 gen=3 ge xi?
+A17 help_numeric helper=A25 gen=3 ge xi?
+A8 help_numeric helper=A29 gen=3 ge xi?
+A18 help_numeric helper=A1 gen=3 ge xi?
+A14 help_numeric helper=A10 gen=3 ge xi?
+A19 help_numeric helper=A9 gen=3 ge xi?
+A20 help_numeric helper=A25 gen=3 ge xi?
+A15 help_numeric helper=A20 gen=3 ge xi?
+A21 help_numeric helper=A14 gen=3 ge xi?
+A22 help_numeric helper=A6 gen=3 ge xi?
+A24 help_numeric helper=A28 gen=3 ge xi?
+A5 help_numeric helper=A19 gen=3 ge xi?
+A25 help_numeric helper=A14 gen=3 ge xi?
+A26 help_numeric helper=A0 gen=3 ge xi?
+A1 help_numeric helper=A29 gen=3 ge xi?
+A27 help_numeric helper=A4 gen=3 ge xi?
+A24 help_numeric helper=A3 gen=3 ge xi?
+A28 help_numeric helper=A6 gen=3 ge xi?
+A8 help_numeric helper=A14 gen=3 ge xi?
+A29 help_numeric helper=A24 gen=3 ge xi?
+A12 help_numeric helper=A25 gen=3 ge xi?
+A1 help_numeric helper=A23 gen=5 cu te fo?
+A3 help_numeric helper=A15 gen=5 cu te fo?
+A4 help_numeric helper=A17 gen=5 cu te fo?
+A5 help_numeric helper=A20 gen=5 cu te fo?
+A6 help_numeric helper=A25 gen=5 cu te fo?
+A7 help_numeric helper=A12 gen=5 cu te fo?
+A8 help_numeric helper=A24 gen=5 cu te fo?
+A9 help_numeric helper=A17 gen=5 cu te fo?
+A10 help_numeric helper=A26 gen=5 cu te fo?
+A11 help_numeric helper=A27 gen=5 cu te fo?
+A13 help_numeric helper=A18 gen=5 cu te fo?
+A14 help_numeric helper=A15 gen=5 cu te fo?
+A3 help_numeric helper=A29 gen=5 cu te fo?
+A15 help_numeric helper=A4 gen=5 cu te fo?
+A16 help_numeric helper=A8 gen=5 cu te fo?
+A13 help_numeric helper=A26 gen=5 cu te fo?
+A5 help_numeric helper=A9 gen=5 cu te fo?
+A6 help_numeric helper=A0 gen=5 cu te fo?
+A10 help_numeric helper=A27 gen=5 cu te fo?
+A11 help_numeric helper=A24 gen=5 cu te fo?
+A3 help_numeric helper=A20 gen=5 cu te fo?
+A7 help_numeric helper=A8 gen=5 cu te fo?
+A8 help_numeric helper=A15 gen=5 cu te fo?
+A1 help_numeric helper=A17 gen=6 cu fi bi?
+A3 help_numeric helper=A27 gen=6 cu fi bi?
+A6 help_numeric helper=A18 gen=6 cu fi bi?
+A7 help_numeric helper=A16 gen=6 cu fi bi?
+A9 help_numeric helper=A8 gen=6 cu fi bi?
+A11 help_numeric helper=A29 gen=6 cu fi bi?
+A7 help_numeric helper=A26 gen=6 cu fi bi?
+A16 help_numeric helper=A14 gen=6 cu fi bi?
+A6 help_numeric helper=A9 gen=6 cu fi bi?
+A18 help_numeric helper=A22 gen=6 cu fi bi?
+A19 help_numeric helper=A3 gen=6 cu fi bi?
+A20 help_numeric helper=A29 gen=6 cu fi bi?
+A21 help_numeric helper=A28 gen=6 cu fi bi?
+A18 help_numeric helper=A17 gen=6 cu fi bi?
+A22 help_numeric helper=A6 gen=6 cu fi bi?
+A25 help_numeric helper=A6 gen=6 cu fi bi?
+A7 help_numeric helper=A8 gen=6 cu fi bi?
+A3 help_numeric helper=A1 gen=6 cu fi bi?
+A21 help_numeric helper=A6 gen=6 cu fi bi?
+A11 help_numeric helper=A2 gen=6 cu fi bi?
+A29 help_numeric helper=A18 gen=6 cu fi bi?
+A12 help_numeric helper=A10 gen=6 cu fi bi?
+A11 help_numeric helper=A23 gen=6 cu fi bi?
+A2 help_numeric helper=A17 gen=6 cu fi bi?
+A11 help_numeric helper=A10 gen=6 cu fi bi?
+A24 help_numeric helper=A14 gen=6 cu fi bi?
+A18 help_numeric helper=A29 gen=6 cu fi bi?
+A0 help_numeric helper=A18 gen=7 fo xa?
+A1 help_numeric helper=A2 gen=7 fo xa?
+A3 help_numeric helper=A21 gen=7 fo xa?
+A5 help_numeric helper=A15 gen=7 fo xa?
+A6 help_numeric helper=A10 gen=7 fo xa?
+A8 help_numeric helper=A20 gen=7 fo xa?
+A6 help_numeric helper=A26 gen=7 fo xa?
+A10 help_numeric helper=A13 gen=7 fo xa?
+A11 help_numeric helper=A6 gen=7 fo xa?
+A10 help_numeric helper=A7 gen=7 fo xa?
+A13 help_numeric helper=A16 gen=7 fo xa?
+A14 help_numeric helper=A13 gen=7 fo xa?
+A5 help_numeric helper=A6 gen=7 fo xa?
+A15 help_numeric helper=A5 gen=7 fo xa?
+A13 help_numeric helper=A11 gen=7 fo xa?
+A16 help_numeric helper=A2 gen=7 fo xa?
+A0 help_numeric helper=A20 gen=7 fo xa?
+A18 help_numeric helper=A27 gen=7 fo xa?
+A19 help_numeric helper=A18 gen=7 fo xa?
+A8 help_numeric helper=A17 gen=7 fo xa?
+A20 help_numeric helper=A12 gen=7 fo xa?
+A22 help_numeric helper=A20 gen=7 fo xa?
+A25 help_numeric helper=A6 gen=7 fo xa?
+A6 help_numeric helper=A9 gen=7 fo xa?
+A26 help_numeric helper=A29 gen=7 fo xa?
+A18 help_numeric helper=A15 gen=7 fo xa?
+A27 help_numeric helper=A4 gen=7 fo xa?
+A28 help_numeric helper=A9 gen=7 fo xa?
+A26 help_numeric helper=A4 gen=7 fo xa?
+A29 help_numeric helper=A1 gen=7 fo xa?
+A16 help_numeric helper=A7 gen=7 fo xa?
+A2 help_numeric helper=A19 gen=7 fo xa?
+A23 help_numeric helper=A11 gen=7 fo xa?
+A24 help_numeric helper=A8 gen=7 fo xa?
+A21 help_numeric helper=A19 gen=7 fo xa?
+A0 help_numeric helper=A1 gen=8 fo xa?
+A3 help_numeric helper=A25 gen=8 fo xa?
+A4 help_numeric helper=A14 gen=8 fo xa?
+A5 help_numeric helper=A12 gen=8 fo xa?
+A7 help_numeric helper=A26 gen=8 fo xa?
+A8 help_numeric helper=A23 gen=8 fo xa?
+A10 help_numeric helper=A29 gen=8 fo xa?
+A13 help_numeric helper=A4 gen=8 fo xa?
+A14 help_numeric helper=A28 gen=8 fo xa?
+A15 help_numeric helper=A0 gen=8 fo xa?
+A16 help_numeric helper=A9 gen=8 fo xa?
+A18 help_numeric helper=A14 gen=8 fo xa?
+A19 help_numeric helper=A5 gen=8 fo xa?
+A20 help_numeric helper=A12 gen=8 fo xa?
+A26 help_numeric helper=A11 gen=8 fo xa?
+A27 help_numeric helper=A7 gen=8 fo xa?
+A14 help_numeric helper=A8 gen=8 fo xa?
+A28 help_numeric helper=A5 gen=8 fo xa?
+A2 help_numeric helper=A18 gen=8 fo xa?
+A0 help_numeric helper=A12 gen=9 cu na cu?
+A3 help_numeric helper=A25 gen=9 cu na cu?
+A10 help_numeric helper=A29 gen=9 cu na cu?
+A13 help_numeric helper=A9 gen=9 cu na cu?
+A15 help_numeric helper=A29 gen=9 cu na cu?
+A20 help_numeric helper=A29 gen=9 cu na cu?
+A22 help_numeric helper=A12 gen=9 cu na cu?
+A27 help_numeric helper=A1 gen=9 cu na cu?
+A28 help_numeric helper=A18 gen=9 cu na cu?
+A23 help_numeric helper=A3 gen=9 cu na cu?
+A17 help_numeric helper=A15 gen=9 cu na cu?
+A6 help_numeric helper=A25 gen=9 cu na cu?
+A4 help_numeric helper=A0 gen=10 qa mo?
+A10 help_numeric helper=A20 gen=10 qa mo?
+A13 help_numeric helper=A2 gen=10 qa mo?
+A22 help_numeric helper=A28 gen=10 qa mo?
+A13 help_numeric helper=A6 gen=10 qa mo?
+A2 help_numeric helper=A6 gen=10 cu cu?
+A23 help_numeric helper=A17 gen=10 cu cu?
+A17 help_numeric helper=A9 gen=10 qa mo?
+A17 help_numeric helper=A21 gen=14 xa voe?
+A17 help_numeric helper=A14 gen=14 xa voe?
+A21 help_numeric helper=A13 gen=14 xa voe?
+A6 help_numeric helper=A8 gen=14 xa voe?
+A25 help_numeric helper=A2 gen=14 xa voe?
+A5 help_numeric helper=A12 gen=14 xa voe?
+A22 help_numeric helper=A23 gen=14 xa voe?
+A17 help_numeric helper=A5 gen=14 xa voe?
+A14 help_numeric helper=A21 gen=14 xa voe?
+A16 help_numeric helper=A8 gen=14 xa voe?
+A14 help_numeric helper=A9 gen=18 cu te fo?
+A1 help_numeric helper=A8 gen=18 cu te fo?
+A18 help_numeric helper=A6 gen=18 cu te fo?
+A15 help_numeric helper=A0 gen=18 cu te fo?
+A15 help_numeric helper=A8 gen=21 cu ti cu?
+A11 help_numeric helper=A5 gen=21 cu ti cu?
+A15 help_numeric helper=A28 gen=21 cu ti cu?
+A8 help_numeric helper=A10 gen=21 cu ti cu?
+A19 help_numeric helper=A7 gen=21 cu ti cu?
+A19 help_numeric helper=A17 gen=21 cu ti cu?
+A26 help_numeric helper=A28 gen=22 mo na?
+A26 help_numeric helper=A12 gen=23 fo xa?
+A0 help_numeric helper=A19 gen=23 fo xa?
+A19 help_numeric helper=A23 gen=24 va fo?
+A7 help_numeric helper=A3 gen=24 va fo?
+A0 help_numeric helper=A18 gen=26 xa fo?
+A9 help_numeric helper=A19 gen=26 xa fo?
+A7 help_numeric helper=A23 gen=27 va so?
+A9 help_numeric helper=A7 gen=27 va so?
+A26 help_numeric helper=A8 gen=28 xa qa?
+A0 help_numeric helper=A28 gen=28 xa qa?
+A9 help_numeric helper=A16 gen=28 xa qa?
+A3 help_numeric helper=A7 gen=28 xa qa?
+A26 help_numeric helper=A17 gen=29 mo va?
+A0 help_numeric helper=A10 gen=29 mo va?
+A9 help_numeric helper=A11 gen=29 mo va?
+A3 help_numeric helper=A19 gen=29 mo va?
+A20 help_numeric helper=A8 gen=29 mo va?
+A2 help_numeric helper=A8 gen=30 fo qa?
+A10 help_numeric helper=A7 gen=30 fo qa?
+A20 help_numeric helper=A14 gen=34 mo xa?
+A10 help_numeric helper=A3 gen=34 cu na xa?
+A13 help_numeric helper=A20 gen=34 mo xa?
+A11 help_numeric helper=A1 gen=34 mo xa?
+A20 help_numeric helper=A15 gen=35 fo fo?
+A13 help_numeric helper=A18 gen=35 fo fo?
+A11 help_numeric helper=A14 gen=35 fo fo?
+A27 help_numeric helper=A29 gen=35 fo fo?
+A10 help_numeric helper=A15 gen=36 mo va?
+A13 help_numeric helper=A7 gen=36 mo va?
+A11 help_numeric helper=A26 gen=36 mo va?
+A25 help_numeric helper=A28 gen=36 mo va?
+A13 help_numeric helper=A0 gen=37 te xa?
+A27 help_numeric helper=A5 gen=37 te xa?
+A11 help_numeric helper=A18 gen=38 mo mo?
+A19 help_numeric helper=A26 gen=38 mo mo?
+A7 help_numeric helper=A24 gen=38 mo mo?
+A11 help_numeric helper=A1 gen=39 cu na?
+A18 help_numeric helper=A1 gen=39 cu na?
+A27 help_numeric helper=A0 gen=39 cu cu fo?
+A25 help_numeric helper=A3 gen=39 cu cu fo?
+A19 help_numeric helper=A24 gen=39 cu na?
+A7 help_numeric helper=A12 gen=39 cu na?
+A15 help_numeric helper=A28 gen=39 cu na?
+A19 help_numeric helper=A23 gen=42 va xa?
+A7 help_numeric helper=A16 gen=42 va xa?
+A15 help_numeric helper=A10 gen=42 va xa?
+A1 help_numeric helper=A29 gen=42 va xa?
+A1 help_numeric helper=A16 gen=42 va xa?
+A29 help_numeric helper=A11 gen=42 va xa?
+A29 help_numeric helper=A23 gen=42 va xa?
+A11 help_numeric helper=A21 gen=42 va xa?
+A7 help_numeric helper=A9 gen=43 xa qa?
+A1 help_numeric helper=A0 gen=43 xa qa?
+A11 help_numeric helper=A5 gen=43 xa qa?
+A24 help_numeric helper=A16 gen=43 xa qa?
+A24 help_numeric helper=A13 gen=44 te fo?
+A1 help_numeric helper=A8 gen=45 xa na?
+A24 help_numeric helper=A27 gen=45 xa na?
+A7 help_numeric helper=A22 gen=45 xa na?
+A29 help_numeric helper=A13 gen=47 cu fo cu?
+A24 help_numeric helper=A23 gen=47 cu fo cu?
+A7 help_numeric helper=A12 gen=47 cu fo cu?
+A24 help_numeric helper=A10 gen=48 cu te te?
+A24 help_numeric helper=A25 gen=49 va qa?
+A24 help_numeric helper=A0 gen=50 va mo?
+A7 help_numeric helper=A21 gen=50 cu na mo?
+A5 help_numeric helper=A20 gen=50 cu na mo?
+A10 help_numeric helper=A22 gen=51 va na?
+A5 help_numeric helper=A1 gen=52 va va?
+A11 help_numeric helper=A13 gen=52 qa mo?
+A14 help_numeric helper=A18 gen=52 va va?
+A10 help_numeric helper=A21 gen=52 qa mo?
+A1 help_numeric helper=A16 gen=52 qa mo?
+A10 help_numeric helper=A6 gen=55 xa fo?
+A22 help_numeric helper=A20 gen=55 xa fo?
+A14 help_numeric helper=A21 gen=56 qa qa?
+A10 help_numeric helper=A26 gen=56 xa na?
+A1 help_numeric helper=A15 gen=56 cu te xa?
+A8 help_numeric helper=A3 gen=56 xa na?
+A22 help_numeric helper=A17 gen=56 xa na?
+A18 help_numeric helper=A4 gen=56 qa qa?
+A8 help_numeric helper=A20 gen=61 mo xa?
+A22 help_numeric helper=A27 gen=61 mo xa?
+A18 help_numeric helper=A13 gen=61 mo xa?
+A3 help_numeric helper=A26 gen=61 xa xa?
+A1 help_numeric helper=A4 gen=61 mo xa?
+A29 help_numeric helper=A2 gen=61 mo xa?
+A18 help_numeric helper=A29 gen=61 mo xa?
+A13 help_numeric helper=A14 gen=61 mo xa?
+A22 help_numeric helper=A0 gen=62 xa va?
+A1 help_numeric helper=A29 gen=62 xa va?
+A1 help_numeric helper=A6 gen=62 xa va?
+A16 help_numeric helper=A28 gen=62 xa va?
+A22 help_numeric helper=A27 gen=63 cu na?
+A1 help_numeric helper=A15 gen=63 cu na?
+A29 help_numeric helper=A5 gen=63 cu cu xa?
+A13 help_numeric helper=A6 gen=63 cu cu xa?
+A16 help_numeric helper=A19 gen=63 cu cu xa?
+A3 help_numeric helper=A23 gen=63 cu na?
+A29 help_numeric helper=A16 gen=64 cu cu fu?
+A13 help_numeric helper=A18 gen=64 cu cu fu?
+A29 help_numeric helper=A27 gen=64 cu cu fu?
+A16 help_numeric helper=A26 gen=64 cu cu fu?
+A3 help_numeric helper=A16 gen=64 cu cu fu?
+A29 help_numeric helper=A6 gen=67 mo xa?
+A13 help_numeric helper=A22 gen=67 mo xa?
+A16 help_numeric helper=A8 gen=67 mo xa?
+A25 help_numeric helper=A13 gen=67 mo xa?
+A3 help_numeric helper=A1 gen=67 mo xa?
+A9 help_numeric helper=A3 gen=67 mo xa?
+A10 help_numeric helper=A2 gen=67 mo xa?
+A25 help_numeric helper=A24 gen=68 cu te na?
+A3 help_numeric helper=A5 gen=68 cu te na?
+A10 help_numeric helper=A16 gen=68 cu te na?
+A10 help_numeric helper=A29 gen=72 va qa?
+A15 help_numeric helper=A8 gen=72 va qa?
+A10 help_numeric helper=A5 gen=73 cu cu?
+A29 help_numeric helper=A8 gen=73 cu cu?
+A9 help_numeric helper=A15 gen=73 cu cu?
+A29 help_numeric helper=A13 gen=75 te ne?
+A15 help_numeric helper=A6 gen=75 te ne?
+A9 help_numeric helper=A26 gen=75 te ne?
+A1 help_numeric helper=A7 gen=75 cu xa?
+A19 help_numeric helper=A5 gen=75 cu xa?
+A25 help_numeric helper=A14 gen=75 cu xa?
+A9 help_numeric helper=A18 gen=79 xa fo?
+A1 help_numeric helper=A23 gen=79 xa fo?
+A25 help_numeric helper=A11 gen=79 xa fo?
+A24 help_numeric helper=A26 gen=79 xa fo?
+A3 help_numeric helper=A7 gen=79 xa fo?
+A19 help_numeric helper=A9 gen=81 xa na?
+A3 help_numeric helper=A8 gen=85 te xa?
+A24 help_numeric helper=A13 gen=85 te xa?
+A21 help_numeric helper=A1 gen=85 te xa?
+A19 help_numeric helper=A15 gen=85 te xa?
+A10 help_numeric helper=A8 gen=85 te xa?
+A9 help_numeric helper=A2 gen=85 te xa?
+A27 help_numeric helper=A17 gen=85 te xa?
+A10 help_numeric helper=A8 gen=89 cu xa?
+A9 help_numeric helper=A12 gen=89 va xa?
+A11 help_numeric helper=A19 gen=89 va xa?
+A1 help_numeric helper=A2 gen=89 cu xa?
+A21 help_numeric helper=A27 gen=89 va xa?
+A9 help_numeric helper=A16 gen=91 fu fu?
+A27 help_numeric helper=A21 gen=91 fu fu?
+A1 help_numeric helper=A15 gen=91 qa na?
+A27 help_numeric helper=A17 gen=91 fu fu?
+A21 help_numeric helper=A1 gen=91 qa na?
+A11 help_numeric helper=A25 gen=91 qa na?
+A14 help_numeric helper=A23 gen=91 qa na?
+A1 help_numeric helper=A26 gen=94 cu na qa?
+A21 help_numeric helper=A22 gen=94 cu na qa?
+A11 help_numeric helper=A9 gen=94 cu na qa?
+A14 help_numeric helper=A9 gen=94 cu na qa?
+A7 help_numeric helper=A23 gen=94 cu na qa?
+A16 help_numeric helper=A21 gen=94 cu na qa?
+A28 help_numeric helper=A3 gen=94 cu na qa?
+A11 help_numeric helper=A7 gen=95 xa fo?
+A14 help_numeric helper=A0 gen=95 xa fo?
+A11 help_numeric helper=A27 gen=95 xa fo?
+A7 help_numeric helper=A1 gen=95 xa fo?
+A16 help_numeric helper=A4 gen=95 xa fo?
+A28 help_numeric helper=A6 gen=95 xa fo?
+A7 help_numeric helper=A14 gen=95 xa fo?
+A1 help_numeric helper=A11 gen=95 xa fo?
+A14 help_numeric helper=A19 gen=97 qa va?
+A7 help_numeric helper=A23 gen=97 qa va?
+A28 help_numeric helper=A0 gen=97 qa va?
+A1 help_numeric helper=A20 gen=97 qa va?
+A16 help_numeric helper=A29 gen=97 va cu?
+A11 help_numeric helper=A22 gen=97 qa va?
+A28 help_numeric helper=A15 gen=98 xa qa?
+A1 help_numeric helper=A19 gen=98 xa qa?
+A11 help_numeric helper=A2 gen=98 xa qa?
+A9 help_numeric helper=A25 gen=98 xa qa?
+A11 help_numeric helper=A16 gen=100 cu cu va?
+A19 help_numeric helper=A16 gen=100 cu cu va?
+A16 help_numeric helper=A29 gen=101 cu na mo?
+A11 help_numeric helper=A15 gen=101 cu na mo?
+A9 help_numeric helper=A5 gen=101 fo qa?
+A19 help_numeric helper=A1 gen=101 cu na mo?
+A28 help_numeric helper=A25 gen=101 cu na mo?
+A27 help_numeric helper=A26 gen=101 cu na mo?
+A16 help_numeric helper=A12 gen=103 mo ti?
+A11 help_numeric helper=A12 gen=103 mo ti?
+A9 help_numeric helper=A21 gen=103 mo ti?
+A28 help_numeric helper=A27 gen=103 mo ti?
+A28 help_numeric helper=A7 gen=103 mo ti?
+A27 help_numeric helper=A21 gen=103 mo ti?
+A19 help_numeric helper=A29 gen=103 mo ti?
+A11 help_numeric helper=A19 gen=104 mo te?
+A9 help_numeric helper=A2 gen=104 mo te?
+A28 help_numeric helper=A13 gen=104 mo te?
+A27 help_numeric helper=A22 gen=104 mo te?
+A19 help_numeric helper=A10 gen=104 mo te?
+A22 help_numeric helper=A20 gen=104 mo te?
+A0 help_numeric helper=A25 gen=113 mo xa?
+A9 help_numeric helper=A8 gen=113 mo xa?
+A15 help_numeric helper=A25 gen=113 mo xa?
+A7 help_numeric helper=A22 gen=113 mo xa?
+A2 help_numeric helper=A1 gen=113 mo xa?
+A5 help_numeric helper=A10 gen=113 mo xa?
+A27 help_numeric helper=A18 gen=113 mo xa?
+A27 help_numeric helper=A15 gen=117 xa cu?
+A25 help_numeric helper=A6 gen=117 xa cu?
+A18 help_numeric helper=A6 gen=117 xa cu?
+A9 help_numeric helper=A5 gen=117 xa cu?
+A0 help_numeric helper=A7 gen=121 xa xa?
+A9 help_numeric helper=A23 gen=121 cu te?
+A18 help_numeric helper=A1 gen=121 xa xa?
+A13 help_numeric helper=A28 gen=121 xa xa?
+A25 help_numeric helper=A12 gen=121 xa xa?
+A27 help_numeric helper=A15 gen=121 xa xa?
+A9 help_numeric helper=A12 gen=125 cu na te?
+A27 help_numeric helper=A18 gen=127 te ne?
+A0 help_numeric helper=A3 gen=127 te ne?
+A9 help_numeric helper=A0 gen=127 te ne?
+A2 help_numeric helper=A28 gen=127 te ne?
+A15 help_numeric helper=A5 gen=127 te ne?
+A27 help_numeric helper=A19 gen=128 cu cu ne?
+A0 help_numeric helper=A9 gen=128 cu cu ne?
+A0 help_numeric helper=A6 gen=128 cu cu ne?
+A9 help_numeric helper=A14 gen=128 cu cu ne?
+A15 help_numeric helper=A27 gen=128 cu cu ne?
+A2 help_numeric helper=A7 gen=128 cu cu ne?
+A27 help_numeric helper=A4 gen=129 xa fo?
+A0 help_numeric helper=A15 gen=129 xa fo?
+A9 help_numeric helper=A1 gen=129 xa fo?
+A0 help_numeric helper=A13 gen=129 xa fo?
+A15 help_numeric helper=A21 gen=129 xa fo?
+A2 help_numeric helper=A22 gen=129 xa fo?
+A28 help_numeric helper=A11 gen=129 xa fo?
+A2 help_numeric helper=A3 gen=133 cu cu mo?
+A28 help_numeric helper=A6 gen=133 cu cu mo?
+A13 help_numeric helper=A2 gen=139 cu cu cu?
+A1 help_numeric helper=A6 gen=139 cu cu cu?
+A29 help_numeric helper=A25 gen=139 cu cu cu?
+A28 help_numeric helper=A17 gen=139 cu cu cu?
+A28 help_numeric helper=A23 gen=143 so te?
+A5 help_numeric helper=A18 gen=143 so te?
+A24 help_numeric helper=A14 gen=143 so te?
+A9 help_numeric helper=A25 gen=143 so te?
+A29 help_numeric helper=A0 gen=144 cu na na?
+A9 help_numeric helper=A0 gen=144 cu na na?
+A13 help_numeric helper=A25 gen=144 cu na na?
+A17 help_numeric helper=A4 gen=144 cu na na?
+A9 help_numeric helper=A26 gen=149 fo xa?
+A13 help_numeric helper=A3 gen=149 fo xa?
+A17 help_numeric helper=A19 gen=149 fo xa?
+A7 help_numeric helper=A24 gen=149 fo xa?
+A5 help_numeric helper=A6 gen=149 fo xa?
+A7 help_numeric helper=A10 gen=154 xa cu?
+A5 help_numeric helper=A3 gen=154 xa cu?
+A14 help_numeric helper=A20 gen=154 xa cu?
+A14 help_numeric helper=A19 gen=154 xa cu?
+A20 help_numeric helper=A24 gen=154 xa cu?
+A9 help_numeric helper=A15 gen=154 xa cu?
+A13 help_numeric helper=A5 gen=154 xa cu?
+A9 help_numeric helper=A22 gen=158 xa fo?
+A13 help_numeric helper=A1 gen=158 xa fo?
+A13 help_numeric helper=A28 gen=160 bo ye?
+A13 help_numeric helper=A1 gen=161 cu cu na?
+A27 help_numeric helper=A10 gen=161 cu cu na?
+A13 help_numeric helper=A25 gen=162 fo mo?
+A27 help_numeric helper=A16 gen=162 fo mo?
+A17 help_numeric helper=A2 gen=162 fo mo?
+A25 help_numeric helper=A23 gen=162 fo mo?
+A6 help_numeric helper=A17 gen=162 fo mo?
+A14 help_numeric helper=A22 gen=162 fo mo?
+A27 help_numeric helper=A6 gen=163 xa na?
+A27 help_numeric helper=A20 gen=163 xa na?
+A6 help_numeric helper=A23 gen=163 xa na?
+A27 help_numeric helper=A5 gen=163 xa na?
+A20 help_numeric helper=A22 gen=163 xa na?
+A17 help_numeric helper=A26 gen=165 cu fo va?
+A25 help_numeric helper=A3 gen=165 cu fo va?
+A6 help_numeric helper=A5 gen=165 cu fo va?
+A14 help_numeric helper=A19 gen=165 cu fo va?
+A20 help_numeric helper=A28 gen=165 cu fo va?
+A16 help_numeric helper=A13 gen=165 cu fo va?
+A25 help_numeric helper=A12 gen=166 cu cu ye?
+A14 help_numeric helper=A29 gen=166 cu cu ye?
+A3 help_numeric helper=A23 gen=166 cu cu ye?
+A14 help_numeric helper=A28 gen=166 cu cu ye?
+A29 help_numeric helper=A21 gen=166 cu cu ye?
+A29 help_numeric helper=A17 gen=170 cu cu ti?
+A3 help_numeric helper=A9 gen=170 cu cu ti?
+A24 help_numeric helper=A25 gen=170 cu cu ti?
+A3 help_numeric helper=A11 gen=170 cu cu ti?
+A9 help_numeric helper=A27 gen=170 cu cu ti?
+A24 help_numeric helper=A10 gen=174 cu mo?
+A9 help_numeric helper=A12 gen=174 cu mo?
+A20 help_numeric helper=A5 gen=174 cu mo?
+A16 help_numeric helper=A7 gen=174 cu mo?
+A9 help_numeric helper=A10 gen=177 xa qa?
+A20 help_numeric helper=A11 gen=177 cu fo fo?
+A2 help_numeric helper=A11 gen=177 xa qa?
+A16 help_numeric helper=A19 gen=177 cu fo fo?
+A6 help_numeric helper=A13 gen=177 xa qa?
+A15 help_numeric helper=A13 gen=177 xa qa?
+A14 help_numeric helper=A22 gen=177 xa qa?
+A6 help_numeric helper=A11 gen=178 cu cu xa?
+A15 help_numeric helper=A22 gen=178 cu cu xa?
+A16 help_numeric helper=A2 gen=179 cu mo?
+A26 help_numeric helper=A22 gen=179 cu mo?
+A6 help_numeric helper=A13 gen=179 cu mo?
+A14 help_numeric helper=A12 gen=183 cu na mo?
+A26 help_numeric helper=A24 gen=183 cu na mo?
+A6 help_numeric helper=A24 gen=183 cu na mo?
+A17 help_numeric helper=A19 gen=183 cu na mo?
+A15 help_numeric helper=A13 gen=183 cu na mo?
+A24 help_numeric helper=A28 gen=183 cu na mo?
+A26 help_numeric helper=A24 gen=185 te mo?
+A6 help_numeric helper=A7 gen=185 te mo?
+A15 help_numeric helper=A23 gen=185 te mo?
+A24 help_numeric helper=A29 gen=185 te mo?
+A9 help_numeric helper=A6 gen=185 te mo?
+A5 help_numeric helper=A9 gen=185 te mo?
+A20 help_numeric helper=A16 gen=192 mo cu?
+A3 help_numeric helper=A6 gen=192 mo cu?
+A27 help_numeric helper=A14 gen=195 cu cu xa?
+A9 help_numeric helper=A5 gen=195 cu cu xa?
+A27 help_numeric helper=A18 gen=196 cu cu xa?
+A3 help_numeric helper=A17 gen=196 xa va?
+A3 help_numeric helper=A27 gen=196 xa va?
+A17 help_numeric helper=A11 gen=196 xa va?
+A13 help_numeric helper=A4 gen=196 xa va?
+A17 help_numeric helper=A7 gen=200 va fu?
+A24 help_numeric helper=A29 gen=200 va fu?
+A9 help_numeric helper=A13 gen=200 va fu?
+A9 help_numeric helper=A19 gen=200 va fu?
+A13 help_numeric helper=A25 gen=200 va fu?
+A14 help_numeric helper=A18 gen=200 va fu?
+A10 help_numeric helper=A27 gen=200 va fu?
+A3 help_numeric helper=A15 gen=200 va fu?
+A9 help_numeric helper=A3 gen=202 cu cu te?
+A13 help_numeric helper=A17 gen=202 cu cu te?
+A3 help_numeric helper=A12 gen=202 cu cu te?
+A23 help_numeric helper=A26 gen=202 cu cu te?
+A13 help_numeric helper=A3 gen=204 va qa?
+A14 help_numeric helper=A29 gen=204 va qa?
+A10 help_numeric helper=A2 gen=204 va qa?
+A3 help_numeric helper=A27 gen=204 va qa?
+A23 help_numeric helper=A3 gen=204 va qa?
+A15 help_numeric helper=A23 gen=204 va qa?
+A5 help_numeric helper=A17 gen=204 va qa?
+A20 help_numeric helper=A6 gen=204 va qa?
+A23 help_numeric helper=A4 gen=206 qa xa?
+A15 help_numeric helper=A28 gen=206 xa xa?
+A20 help_numeric helper=A18 gen=206 xa xa?
+A20 help_numeric helper=A6 gen=212 xa cu?
+A3 help_numeric helper=A0 gen=212 xa cu?
+A3 help_numeric helper=A12 gen=212 xa cu?
+A0 help_numeric helper=A18 gen=212 xa cu?
+A15 help_numeric helper=A6 gen=212 xa cu?
+A14 help_numeric helper=A5 gen=212 xa voe?
+A10 help_numeric helper=A3 gen=212 xa voe?
+A13 help_numeric helper=A2 gen=212 xa cu?
+A23 help_numeric helper=A20 gen=212 xa voe?
+A15 help_numeric helper=A5 gen=214 cu na xa?
+A10 help_numeric helper=A14 gen=214 cu na xa?
+A13 help_numeric helper=A1 gen=214 cu na xa?
+A23 help_numeric helper=A1 gen=214 cu na xa?
+A17 help_numeric helper=A3 gen=214 cu na xa?
+A10 help_numeric helper=A2 gen=214 cu na xa?
+A14 help_numeric helper=A19 gen=214 cu na xa?
+A13 help_numeric helper=A20 gen=218 cu cu te?
+A23 help_numeric helper=A6 gen=218 fo mo?
+A17 help_numeric helper=A27 gen=218 cu cu te?
+A15 help_numeric helper=A0 gen=218 fo mo?
+A14 help_numeric helper=A2 gen=218 cu cu te?
+A6 help_numeric helper=A11 gen=218 fo mo?
+A15 help_numeric helper=A13 gen=228 cu na?
+A3 help_numeric helper=A10 gen=228 cu na?
+A17 help_numeric helper=A13 gen=228 cu na?
+A13 help_numeric helper=A22 gen=228 cu na?
+A14 help_numeric helper=A5 gen=228 cu na?
+A0 help_numeric helper=A28 gen=228 cu na?
+A16 help_numeric helper=A24 gen=228 cu na?
+A17 help_numeric helper=A19 gen=230 te xa?
+A13 help_numeric helper=A12 gen=230 te xa?
+A5 help_numeric helper=A29 gen=230 te xa?
+A14 help_numeric helper=A7 gen=230 te xa?
+A0 help_numeric helper=A19 gen=230 te xa?
+A16 help_numeric helper=A24 gen=230 te xa?
+A18 help_numeric helper=A7 gen=230 te xa?
+A3 help_numeric helper=A10 gen=230 te xa?
+A5 help_numeric helper=A22 gen=232 xa te?
+A0 help_numeric helper=A18 gen=232 xa te?
+A16 help_numeric helper=A17 gen=232 xa te?
+A0 help_numeric helper=A8 gen=232 xa te?
+A18 help_numeric helper=A27 gen=232 xa te?
+A3 help_numeric helper=A21 gen=232 xa te?
+A14 help_numeric helper=A0 gen=232 xa te?
+A6 help_numeric helper=A9 gen=232 xa te?
+A5 help_numeric helper=A19 gen=233 xa mo?
+A18 help_numeric helper=A12 gen=233 mo xa?
+A3 help_numeric helper=A17 gen=233 mo xa?
+A14 help_numeric helper=A24 gen=233 xa mo?
+A6 help_numeric helper=A11 gen=233 xa mo?
+A16 help_numeric helper=A27 gen=233 mo xa?
+A18 help_numeric helper=A6 gen=235 fo xa?
+A3 help_numeric helper=A5 gen=235 fo xa?
+A14 help_numeric helper=A23 gen=235 fo xa?
+A18 help_numeric helper=A28 gen=235 fo xa?
+A6 help_numeric helper=A22 gen=235 fo xa?
+A21 help_numeric helper=A9 gen=235 fo xa?
+A16 help_numeric helper=A4 gen=235 fo xa?
+A16 help_numeric helper=A2 gen=239 mo qa?
+A17 help_numeric helper=A27 gen=242 va na?
+A23 help_numeric helper=A13 gen=242 va na?
+A16 help_numeric helper=A22 gen=242 va na?
+A2 help_numeric helper=A9 gen=242 va na?
+A23 help_numeric helper=A9 gen=244 cu va?
+A16 help_numeric helper=A1 gen=244 cu va?
+A15 help_numeric helper=A20 gen=244 cu va?
+A14 help_numeric helper=A28 gen=244 cu va?
+A2 help_numeric helper=A21 gen=244 cu va?
+A17 help_numeric helper=A5 gen=244 cu va?
+A28 help_numeric helper=A0 gen=244 cu va?
+A16 help_numeric helper=A12 gen=245 mo qa?
+A14 help_numeric helper=A2 gen=245 mo qa?
+A17 help_numeric helper=A4 gen=245 mo qa?
+A28 help_numeric helper=A1 gen=245 mo qa?
+A15 help_numeric helper=A6 gen=247 cu fo na?
+A14 help_numeric helper=A12 gen=247 cu fo na?
+A2 help_numeric helper=A23 gen=247 cu fo na?
+A17 help_numeric helper=A8 gen=247 cu fo na?
+A28 help_numeric helper=A2 gen=247 cu fo na?
+A5 help_numeric helper=A14 gen=247 cu fo na?
+A29 help_numeric helper=A14 gen=247 cu fo na?
+A28 help_numeric helper=A26 gen=248 cu te?
+A29 help_numeric helper=A24 gen=248 cu te?
+A5 help_numeric helper=A20 gen=252 va xa?
+A29 help_numeric helper=A28 gen=252 va xa?
+A5 help_numeric helper=A10 gen=252 va xa?
+A11 help_numeric helper=A19 gen=252 va xa?
+A18 help_numeric helper=A25 gen=252 va xa?
+A16 help_numeric helper=A29 gen=252 va xa?
+A23 help_numeric helper=A21 gen=259 xa fo?
+A6 help_numeric helper=A17 gen=259 fo fo?
+A11 help_numeric helper=A29 gen=259 fo fo?
+A29 help_numeric helper=A21 gen=259 xa fo?
+A24 help_numeric helper=A23 gen=259 fo fo?
+A28 help_numeric helper=A1 gen=259 fo fo?
+A23 help_numeric helper=A5 gen=260 cu xa?
+A6 help_numeric helper=A2 gen=260 cu xa?
+A11 help_numeric helper=A12 gen=260 cu xa?
+A29 help_numeric helper=A20 gen=260 cu xa?
+A24 help_numeric helper=A17 gen=260 cu xa?
+A28 help_numeric helper=A29 gen=260 cu xa?
+A23 help_numeric helper=A15 gen=260 cu xa?
+A5 help_numeric helper=A16 gen=260 cu xa?
+A6 help_numeric helper=A4 gen=263 xa te?
+A11 help_numeric helper=A5 gen=263 xa te?
+A29 help_numeric helper=A7 gen=263 xa te?
+A24 help_numeric helper=A3 gen=263 xa te?
+A28 help_numeric helper=A27 gen=263 xa te?
+A11 help_numeric helper=A0 gen=263 xa te?
+A5 help_numeric helper=A20 gen=263 xa te?
+A13 help_numeric helper=A23 gen=263 xa te?
+A24 help_numeric helper=A28 gen=263 xa te?
+A24 help_numeric helper=A1 gen=265 cu na na?
+A28 help_numeric helper=A29 gen=265 cu na na?
+A5 help_numeric helper=A7 gen=265 cu na na?
+A14 help_numeric helper=A15 gen=265 cu na na?
+A13 help_numeric helper=A21 gen=265 cu na na?
+A3 help_numeric helper=A28 gen=265 cu na na?
+A9 help_numeric helper=A14 gen=265 cu na na?
+A2 help_numeric helper=A19 gen=265 cu na na?
+A26 help_numeric helper=A27 gen=298 xa te?
+A16 help_numeric helper=A24 gen=298 xa te?
+A28 help_numeric helper=A23 gen=298 xa te?
+A10 help_numeric helper=A11 gen=298 xa te?
+A7 help_numeric helper=A12 gen=298 xa te?
+A26 help_numeric helper=A5 gen=298 xa te?
+A27 help_numeric helper=A24 gen=298 xa te?
+A26 help_numeric helper=A17 gen=298 xa te?
+A5 help_numeric helper=A0 gen=298 xa te?
+A16 help_numeric helper=A24 gen=300 qa cu?
+A28 help_numeric helper=A16 gen=300 qa cu?
+A10 help_numeric helper=A13 gen=300 qa cu?
+A12 help_numeric helper=A23 gen=300 qa cu?
+A7 help_numeric helper=A4 gen=300 qa cu?
+A27 help_numeric helper=A6 gen=300 qa cu?
+A5 help_numeric helper=A10 gen=300 qa cu?
+A1 help_numeric helper=A12 gen=300 qa cu?
+A1 help_numeric helper=A19 gen=307 xa qa?
+A12 help_numeric helper=A29 gen=307 xa qa?
+A10 help_numeric helper=A29 gen=307 xa qa?
+A7 help_numeric helper=A18 gen=307 xa qa?
+A28 help_numeric helper=A26 gen=307 xa qa?
+A13 help_numeric helper=A2 gen=307 xa qa?
+A21 help_numeric helper=A9 gen=307 xa qa?
+A14 help_numeric helper=A12 gen=307 xa qa?
+A10 help_numeric helper=A15 gen=309 qa xa?
+A7 help_numeric helper=A22 gen=309 qa xa?
+A13 help_numeric helper=A29 gen=309 qa xa?
+A21 help_numeric helper=A18 gen=309 qa xa?
+A14 help_numeric helper=A7 gen=309 qa xa?
+A16 help_numeric helper=A4 gen=309 qa xa?
+A8 help_numeric helper=A23 gen=309 qa xa?
+A13 help_numeric helper=A18 gen=312 qa xa?
+A21 help_numeric helper=A27 gen=312 qa xa?
+A14 help_numeric helper=A7 gen=312 qa xa?
+A16 help_numeric helper=A14 gen=312 qa xa?
+A8 help_numeric helper=A25 gen=312 qa xa?
+A10 help_numeric helper=A21 gen=312 qa xa?
+A5 help_numeric helper=A24 gen=312 qa xa?
+A26 help_numeric helper=A19 gen=312 qa xa?
+A9 help_numeric helper=A12 gen=319 va na?
+A16 help_numeric helper=A27 gen=319 va na?
+A13 help_numeric helper=A8 gen=319 va na?
+A12 help_numeric helper=A10 gen=319 va na?
+A21 help_numeric helper=A13 gen=319 va na?
+A26 help_numeric helper=A6 gen=319 va na?
+A14 help_numeric helper=A23 gen=319 va na?
+A16 help_numeric helper=A29 gen=321 xa na?
+A13 help_numeric helper=A1 gen=321 xa na?
+A12 help_numeric helper=A0 gen=321 xa na?
+A26 help_numeric helper=A25 gen=321 xa na?
+A14 help_numeric helper=A22 gen=321 xa na?
+A28 help_numeric helper=A25 gen=321 xa na?
+A20 help_numeric helper=A28 gen=321 xa na?
+A26 help_numeric helper=A10 gen=324 va mo?
+A14 help_numeric helper=A26 gen=324 va mo?
+A28 help_numeric helper=A14 gen=324 va mo?
+A20 help_numeric helper=A12 gen=324 va mo?
+A21 help_numeric helper=A17 gen=324 va mo?
+A12 help_numeric helper=A29 gen=324 va mo?
+A5 help_numeric helper=A23 gen=324 va mo?
+A28 help_numeric helper=A26 gen=327 cu na xa?
+A20 help_numeric helper=A12 gen=327 cu na xa?
+A21 help_numeric helper=A6 gen=327 cu na xa?
+A20 help_numeric helper=A13 gen=327 cu na xa?
+A12 help_numeric helper=A25 gen=327 cu na xa?
+A5 help_numeric helper=A29 gen=327 cu na xa?
+A3 help_numeric helper=A18 gen=327 cu na xa?
+A21 help_numeric helper=A0 gen=327 cu na xa?
+A6 help_numeric helper=A9 gen=327 cu na xa?
+A8 help_numeric helper=A27 gen=338 cu cu qa?
+A25 help_numeric helper=A18 gen=338 cu cu qa?
+A5 help_numeric helper=A7 gen=338 cu cu qa?
+A21 help_numeric helper=A29 gen=338 cu cu qa?
+A6 help_numeric helper=A27 gen=338 cu cu qa?
+A28 help_numeric helper=A20 gen=338 cu cu qa?
+A27 help_numeric helper=A16 gen=338 cu cu qa?
+A5 help_numeric helper=A27 gen=351 xa fo?
+A3 help_numeric helper=A22 gen=351 xa fo?
+A29 help_numeric helper=A12 gen=351 xa fo?
+A28 help_numeric helper=A25 gen=351 xa fo?
+A3 help_numeric helper=A7 gen=353 cu te va?
+A8 help_numeric helper=A0 gen=353 cu te va?
+A20 help_numeric helper=A29 gen=353 cu te va?
+A6 help_numeric helper=A26 gen=353 cu te va?
+A14 help_numeric helper=A22 gen=353 cu te va?
+A15 help_numeric helper=A7 gen=363 qa te?
+A12 help_numeric helper=A11 gen=363 qa te?
+A6 help_numeric helper=A0 gen=363 fo qa?
+A11 help_numeric helper=A6 gen=363 qa te?
+A7 help_numeric helper=A28 gen=363 qa te?
+A24 help_numeric helper=A22 gen=363 qa te?
+A20 help_numeric helper=A3 gen=363 fo qa?
+A5 help_numeric helper=A17 gen=363 qa te?
+A5 help_numeric helper=A14 gen=371 mo na?
+A1 help_numeric helper=A9 gen=371 mo na?
+A28 help_numeric helper=A22 gen=371 mo na?
+A20 help_numeric helper=A26 gen=371 mo na?
+A14 help_numeric helper=A25 gen=371 mo na?
+A15 help_numeric helper=A5 gen=371 cu te na?
+A28 help_numeric helper=A5 gen=379 cu na fo?
+A1 help_numeric helper=A9 gen=379 cu na fo?
+A5 help_numeric helper=A20 gen=379 cu na fo?
+A27 help_numeric helper=A11 gen=379 cu na fo?
+A21 help_numeric helper=A2 gen=388 cu na xa?
+A9 help_numeric helper=A12 gen=388 cu na xa?
+A14 help_numeric helper=A17 gen=388 cu na xa?
+A23 help_numeric helper=A27 gen=388 cu na xa?
+A18 help_numeric helper=A7 gen=388 cu na xa?
+A21 help_numeric helper=A9 gen=388 cu na xa?
+A2 help_numeric helper=A18 gen=388 cu na xa?
+A1 help_numeric helper=A3 gen=388 cu na xa?
+A28 help_numeric helper=A5 gen=388 cu na xa?
+A1 help_numeric helper=A28 gen=408 cu cu xa?
+A27 help_numeric helper=A2 gen=408 cu cu xa?
+A13 help_numeric helper=A18 gen=408 cu cu xa?
+A24 help_numeric helper=A14 gen=408 cu cu xa?
+A24 help_numeric helper=A3 gen=408 cu cu xa?
+A14 help_numeric helper=A1 gen=408 cu cu xa?
+A8 help_numeric helper=A14 gen=408 cu cu xa?
+A12 help_numeric helper=A15 gen=408 cu cu xa?
+A11 help_numeric helper=A1 gen=444 xa na?
+A18 help_numeric helper=A17 gen=444 xa na?
+A24 help_numeric helper=A8 gen=444 xa na?
+A9 help_numeric helper=A22 gen=444 xa na?
+A15 help_numeric helper=A14 gen=444 xa na?
+A29 help_numeric helper=A3 gen=461 cu te?
+A3 help_numeric helper=A17 gen=461 cu te?
+A27 help_numeric helper=A28 gen=461 cu te?
+A10 help_numeric helper=A29 gen=461 cu te?
+A20 help_numeric helper=A25 gen=461 cu te?
+A9 help_numeric helper=A22 gen=461 cu te?
+A27 help_numeric helper=A3 gen=462 cu xa?
+A10 help_numeric helper=A17 gen=462 cu xa?
+A20 help_numeric helper=A21 gen=462 cu xa?
+A9 help_numeric helper=A27 gen=462 cu xa?
+A29 help_numeric helper=A28 gen=462 cu xa?
+A3 help_numeric helper=A23 gen=463 cu na cu?
+A10 help_numeric helper=A19 gen=463 cu na cu?
+A20 help_numeric helper=A28 gen=463 cu na cu?
+A29 help_numeric helper=A25 gen=463 cu na cu?
+A11 help_numeric helper=A14 gen=475 xa qa?
+A23 help_numeric helper=A0 gen=475 xa qa?
+A9 help_numeric helper=A2 gen=475 xa qa?
+A10 help_numeric helper=A5 gen=483 mo na?
+A28 help_numeric helper=A20 gen=483 mo na?
+A11 help_numeric helper=A8 gen=483 mo na?
+A1 help_numeric helper=A2 gen=483 mo na?
+A22 help_numeric helper=A2 gen=483 mo na?
+A8 help_numeric helper=A9 gen=483 mo na?
+A10 help_numeric helper=A5 gen=484 qa xa?
+A28 help_numeric helper=A11 gen=484 qa xa?
+A21 help_numeric helper=A16 gen=484 qa xa?
+A28 help_numeric helper=A21 gen=484 qa xa?
+A11 help_numeric helper=A4 gen=484 qa xa?
+A1 help_numeric helper=A6 gen=484 qa xa?
+A22 help_numeric helper=A0 gen=484 qa xa?
+A8 help_numeric helper=A24 gen=484 qa xa?
+A20 help_numeric helper=A25 gen=484 qa xa?
+A27 help_numeric helper=A19 gen=494 qa te?
+A2 help_numeric helper=A1 gen=494 qa te?
+A1 help_numeric helper=A26 gen=494 qa te?
+A24 help_numeric helper=A10 gen=494 qa te?
+A9 help_numeric helper=A29 gen=494 qa te?
+A21 help_numeric helper=A20 gen=494 qa te?
+A18 help_numeric helper=A3 gen=494 qa te?

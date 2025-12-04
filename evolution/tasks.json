@@ -1,0 +1,14 @@
+{
+    "task_id": "T001",
+    "task_type": "compare_numbers",
+    "instruction": {
+      "base": 12,
+      "format": "compare",
+      "description": "Which of these two numbers is larger?"
+    },
+    "data": {
+      "A": "mu",
+      "B": "ya"
+    },
+    "responses": []
+  }
