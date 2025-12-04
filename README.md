@@ -1,5 +1,30 @@
 # Agent Sandbox Project
 
+## Table of Contents
+- [Overview](#overview)
+- [Agent Criteria](#agent-criteria)
+- [System Criteria](#system-criteria)
+- [Risks & Failure Modes](#risks--failure-modes)
+- [Architecture](#architecture)
+  - [1. Agent Core](#1-agent-core)
+  - [2. Communication System](#2-communication-system)
+  - [3. Environment Layout](#3-environment-layout)
+  - [4. Decision-Making Loop](#4-decision-making-loop)
+  - [5. Fitness / Alignment Model](#5-fitness--alignment-model)
+  - [6. Mutation and Drift](#6-mutation-and-drift)
+  - [7. Tracking & Logging](#7-tracking--logging)
+- [Timeline](#timeline)
+  - [Phase 1 — Foundations](#phase-1--foundations-completed--in-progress)
+  - [Phase 2 — Increasing Cognitive Complexity](#phase-2--increasing-cognitive-complexity)
+  - [Phase 3 — Conflict--cooperation](#phase-3--conflict--cooperation)
+  - [Phase 4 — Abstract Reasoning](#phase-4--abstract-reasoning-experimental)
+  - [Phase 5 — Meta-Behaviour](#phase-5--meta-behaviour)
+  - [Phase 6 — Research Questions](#phase-6--research-questions)
+- [Upcoming Features](#upcoming-features)
+- [Observations So Far](#observations-so-far)
+
+The Agent Sandbox Project is a research-oriented environment for studying emergent behaviour in multi-agent systems. Each agent develops its own internal semantic map, communicates using evolving token structures, and adapts over generations through evolutionary pressure. By observing how concepts, cooperation, subcultures, numeracy, and proto-language evolve, this project aims to uncover how complex collective cognition can arise from simple individual components.
+
 ## Overview
 This project is a sandbox for exploring how emergent behaviour arises within a multi-agent system, both at the individual agent level and at the collective level.  
 To maintain interpretability, the system uses a limited number of agents with constrained but extensible abilities.
@@ -242,11 +267,6 @@ This system is intended not just as a simulation, but as a **research platform**
 - What triggers hierarchy or leadership?  
 - Can distributed cognition solve harder tasks?  
 - Does coherence emerge without central control?  
-
----
-
-# Current Implementation
-*(To be filled out)*
 
 ---
 
