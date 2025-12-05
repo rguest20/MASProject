@@ -9,7 +9,8 @@ from agents.agent import Agent
 from evolution.challenge import ChallengeSystem
 from evolution.counting import CountingSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
-from evolution.programs import run_program, safe
+from evolution.programs import run_program, safe, mutate_program
+
 from evolution.behaviours.orchestration import orchestrate_action
 
 
@@ -861,7 +862,6 @@ class Coordinator:
             # 1. Program inheritance (existing logic)
             # ------------------------------
             new_prog = Coordinator.crossover_program(student.program, teacher.program)
-            from evolution.programs import mutate_program
             new_prog = mutate_program(new_prog)
 
             if IMPROVE_ONLY_TEACH:
@@ -1213,8 +1213,6 @@ class Coordinator:
     #     child.symbol_map_history = {}
 
     #     return child
-
-    from collections import defaultdict
 
     def make_child(self, p1, p2, p3, new_id):
         """
@@ -1932,9 +1930,13 @@ class Coordinator:
 
         # --- Community Semantics ---
         self.print_community_semantic_stats()
+
         for a in self.agents:
             if hasattr(a, "detect_semantic_gaps"):
                 a.detect_semantic_gaps(self.community_semantic)
+            if hasattr(a, "apply_flavour_homeostasis"):
+                a.apply_flavour_homeostasis(self.community_semantic)
+
         self.print_semantic_gap_stats()
         self.semantic_alignment_tasks = []
 
@@ -1970,10 +1972,10 @@ class Coordinator:
         """
         Produces tasks where A and B may be:
             - single-digit tokens (existing behaviour)
-            - OR multi-token base-16 numbers, e.g. "qa hu" for 0x10.
+            - OR multi-token base-N numbers.
 
-        Agents must use their existing CountingSystem and
-        token maps to interpret multi-token sequences.
+        Agents must use the *reference agent's* CountingSystem and
+        symbol map to interpret the sequences.
         """
 
         # choose a *reference* agent with stable symbol_map
@@ -1989,19 +1991,27 @@ class Coordinator:
         A_val = random.randint(0, max_n)
         B_val = random.randint(0, max_n)
 
-        # convert each to multi-token base-16 numeral
+        # convert each to multi-token numeral using the ref's system
         A_tokens = ref.speak_number(A_val).split()
         B_tokens = ref.speak_number(B_val).split()
 
-        # flatten back into space-separated tokens
         A_str = " ".join(A_tokens)
         B_str = " ".join(B_tokens)
+
+        # precompute ground truth in the *same* system (ref)
+        if A_val > B_val:
+            correct_phrase = A_str
+        elif B_val > A_val:
+            correct_phrase = B_str
+        else:
+            correct_phrase = A_str  # tie → A
 
         return {
             "task_id": self._generate_task_id(),
             "task_type": "compare_numbers",
             "instruction": {
                 "base": base,
+                "symbol_map": smap,               # 🔴 IMPORTANT LINE
                 "format": "compare",
                 "description": "Which number is larger?"
             },
@@ -2009,7 +2019,14 @@ class Coordinator:
                 "A": A_str,
                 "B": B_str
             },
-            "responses": []
+            # 🔎 Optional: include explicit numeric ground truth for logging
+            "ground_truth": {
+                "ref_agent": ref.id,
+                "A_val": A_val,
+                "B_val": B_val,
+                "answer_phrase": correct_phrase
+            },
+            "responses": [],
         }
 
     def generate_cooperative_compare_task(self):
@@ -2045,15 +2062,12 @@ class Coordinator:
 
         task = {
             "task_id": self._generate_task_id(),
-            "task_type": "cooperative_compare_numbers",
+            "task_type": "compare_numbers",
+            "performer": agent.id,   # <-- NEW LINE
             "data": {
-                "A": A_phrase,
-                "B": B_phrase,
-                "a_val": a_val,       # optional, for evaluation
-                "b_val": b_val,
-                "ref_agent": ref.id,
+                "A": number_phrase_A,
+                "B": number_phrase_B,
             },
-            "assigned_agents": assigned,
         }
 
         # optional: log for debugging
@@ -2276,55 +2290,6 @@ class Coordinator:
             for aid, tok, dist in samples:
                 print(f"  A{aid}: '{tok}' dist={dist:.3f}")
 
-    def update_community_semantic(self, sample_k=200, smooth=0.2):
-        """
-        Build/refresh the community semantic centroid.
-        Called once per generation.
-        """
-        import numpy as np
-
-        aggregate = {}
-        counts = {}
-
-        # -----------------------------
-        # Collect snapshots from agents
-        # -----------------------------
-        for ag in self.agents:
-            snap = ag.export_semantic_snapshot(k=sample_k)
-            for tok, vec in snap.items():
-
-                # Skip identity tokens (A23 etc)
-                if isinstance(tok, str) and tok.startswith("a") and tok[1:].isdigit():
-                    continue
-
-                # Initialise sum
-                if tok not in aggregate:
-                    aggregate[tok] = np.array(vec, dtype=float)
-                    counts[tok] = 1
-                else:
-                    aggregate[tok] += np.array(vec, dtype=float)
-                    counts[tok] += 1
-
-        # -----------------------------
-        # Compute averaged centroids
-        # -----------------------------
-        for tok, v in aggregate.items():
-            newv = (v / counts[tok]).tolist()
-
-            if tok in self.community_semantic["vecs"]:
-                oldv = self.community_semantic["vecs"][tok]
-                # smoothing = slow drift toward consensus
-                blended = [
-                    (1 - smooth) * o + smooth * n
-                    for o, n in zip(oldv, newv)
-                ]
-                self.community_semantic["vecs"][tok] = blended
-            else:
-                self.community_semantic["vecs"][tok] = newv
-
-        self.community_semantic["counts"] = counts
-        self.community_semantic["last_update_gen"] = self.generation_index
-
     def community_distance(self, tok, community_map):
         if tok not in community_map["vecs"]:
             return None
@@ -2372,7 +2337,6 @@ class Coordinator:
             return
 
         comm_vecs = self.community_semantic.get("vecs", {})
-        from collections import defaultdict
         proposer_credit = defaultdict(float)
 
         for task in self.semantic_alignment_tasks:
@@ -2509,13 +2473,94 @@ class Coordinator:
         conf = (0.6 * cov_factor + 0.4 * dist_factor)
         return max(0.0, min(1.0, conf))
 
-    def update_community_semantic(self, max_tokens=5000):
+    # =======================================================
+    # COMMUNITY SEMANTIC MAP (MIXED STRENGTH, MODE C)
+    # ======================================================
+    def _compute_token_stats(self, token):
         """
-        Mixed-strength EM update (Mode C):
-          - all tokens get *some* community centroid
-          - high-confidence tokens update fast (strong anchor)
-          - low-confidence tokens update slowly (preserve exploration)
+        For a given token, gather all agent vectors and compute:
+          - mean vector
+          - mean distance to the mean
+          - coverage (fraction of agents that know it)
+          - mean local usage_count across agents that know it
         """
+        import numpy as np
+
+        vecs = []
+        usage_vals = []
+        num_agents = max(1, len(self.agents))
+
+        for ag in self.agents:
+            sem = getattr(ag, "semantic", None)
+            if not sem:
+                continue
+
+            v = sem.get("vecs", {}).get(token)
+            if v is None:
+                continue
+
+            vecs.append(np.array(v, dtype=float))
+
+            meta = sem.get("tokens", {}).get(token, {})
+            usage_vals.append(float(meta.get("usage_count", 0.0)))
+
+        if not vecs:
+            return None, 0.0, 0.0, 0.0
+
+        arr = np.stack(vecs, axis=0)
+        mean_vec = arr.mean(axis=0)
+
+        dists = np.linalg.norm(arr - mean_vec, axis=1)
+        mean_dist = float(dists.mean()) if len(dists) > 0 else 0.0
+
+        coverage = len(vecs) / num_agents
+        mean_usage = float(sum(usage_vals) / max(1, len(usage_vals)))
+
+        return mean_vec, mean_dist, coverage, mean_usage
+
+    def _community_token_confidence(self, mean_dist, coverage):
+        """
+        Confidence in [0,1]:
+          - higher when many agents agree (coverage high)
+          - higher when they are close together (mean_dist small)
+        """
+        # distance factor: ~1 when dist=0, decays with distance
+        dist_factor = 1.0 / (1.0 + 0.5 * mean_dist)
+        dist_factor = max(0.0, min(1.0, dist_factor))
+
+        cov_factor = max(0.0, min(1.0, coverage))
+
+        # combine, slightly emphasise agreement
+        conf = (0.6 * cov_factor + 0.4 * dist_factor)
+        return max(0.0, min(1.0, conf))
+
+    def update_community_semantic(
+        self,
+        max_tokens=1024,
+        min_coverage=0.15,
+        max_mean_dist=2.0,
+        min_usage=5,
+        prune_min_age=10,
+        prune_conf=0.25,
+        prune_target_size=512,
+    ):
+        """
+        Mixed-strength EM update (bounded Mode C):
+
+          • Only consider tokens that:
+              - are used enough locally (min_usage)
+              - appear in enough agents (min_coverage)
+              - are not wildly inconsistent (mean_dist <= max_mean_dist)
+
+          • High-confidence tokens update faster (strong anchor),
+            low-confidence ones drift slowly.
+
+          • Old, persistently low-confidence tokens are pruned.
+
+          • Global vocab size is capped at prune_target_size by
+            dropping the lowest-confidence, least-updated tokens.
+        """
+
         if not self.agents:
             return
 
@@ -2524,25 +2569,48 @@ class Coordinator:
         c_counts = com["counts"]
         c_conf = com["confidence"]
 
-        # Collect candidate tokens from population
+        # ----------------------------------------------
+        # 1) Collect candidate tokens with usage gating
+        # ----------------------------------------------
         token_set = set()
+
         for ag in self.agents:
             sem = getattr(ag, "semantic", None)
             if not sem:
                 continue
-            token_set |= set(sem.get("vecs", {}).keys())
+
+            tokens_meta = sem.get("tokens", {})
+            for tok, meta in tokens_meta.items():
+                # Skip obviously identity-like tokens (a23, A7, etc.)
+                if isinstance(tok, str) and tok.lower().startswith("a") and tok[1:].isdigit():
+                    continue
+
+                if meta.get("usage_count", 0) >= min_usage:
+                    token_set.add(tok)
 
         if not token_set:
             return
 
-        # Limit for sanity
         tokens = list(token_set)
         random.shuffle(tokens)
         tokens = tokens[:max_tokens]
 
+        # ----------------------------------------------
+        # 2) EM-style centroid update with confidence
+        # ----------------------------------------------
         for tok in tokens:
-            mean_vec, mean_dist, coverage = self._compute_token_stats(tok)
+            stats = self._compute_token_stats(tok)
+            if stats is None:
+                continue
+            mean_vec, mean_dist, coverage, mean_usage = stats
+
             if mean_vec is None:
+                continue
+
+            # Hard gates: only “community-worthy” tokens enter
+            if coverage < min_coverage:
+                continue
+            if mean_dist > max_mean_dist:
                 continue
 
             conf = self._community_token_confidence(mean_dist, coverage)
@@ -2560,6 +2628,40 @@ class Coordinator:
             c_vecs[tok] = new.tolist()
             c_counts[tok] = c_counts.get(tok, 0) + 1
             c_conf[tok] = conf
+
+        # ----------------------------------------------
+        # 3) Prune old, low-confidence tokens
+        # ----------------------------------------------
+        to_delete = []
+
+        for tok, old_conf in list(c_conf.items()):
+            age = c_counts.get(tok, 0)
+
+            # Only prune tokens that have had time to stabilise
+            if age >= prune_min_age and old_conf < prune_conf:
+                to_delete.append(tok)
+
+        for tok in to_delete:
+            c_vecs.pop(tok, None)
+            c_counts.pop(tok, None)
+            c_conf.pop(tok, None)
+
+        # ----------------------------------------------
+        # 4) Enforce global vocab cap
+        # ----------------------------------------------
+        if len(c_vecs) > prune_target_size:
+            # Sort by (confidence asc, age asc) → drop worst first
+            sorted_tokens = sorted(
+                list(c_vecs.keys()),
+                key=lambda t: (c_conf.get(t, 0.0), c_counts.get(t, 0))
+            )
+            excess = len(c_vecs) - prune_target_size
+            for tok in sorted_tokens[:excess]:
+                c_vecs.pop(tok, None)
+                c_counts.pop(tok, None)
+                c_conf.pop(tok, None)
+
+        com["last_update_gen"] = self.generation_index
 
     # =====================================================
     # EMERGENT DIALOGUE ARENA

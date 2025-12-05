@@ -147,6 +147,24 @@ class SemanticMixin:
             if tok not in sem["vecs"]:
                 sem["vecs"][tok] = _local_randvec()
 
+    def _clip_semantic_vec(self, vec, max_norm=5.0):
+        """
+        Safety clamp for semantic vectors.
+        Keeps norms bounded to avoid runaway explosions.
+        """
+        if not isinstance(vec, (list, tuple)):
+            return vec
+
+        v = np.array(vec, dtype=float)
+        n = np.linalg.norm(v)
+        if not np.isfinite(n) or n == 0.0:
+            # reset totally broken vectors to small random
+            return self._rand_vec(dim=len(v))
+
+        if n > max_norm:
+            v = v * (max_norm / n)
+        return v.tolist()
+
     def _rand_vec(self, dim=32):
         """Wrapper so all mixins can request random semantic vectors."""
         try:
@@ -310,7 +328,7 @@ class SemanticMixin:
         self._ensure_semantic()
         vecs = self.semantic["vecs"]
         if tok not in vecs:
-            vecs[tok] = rand_vec()
+            vecs[tok] = self._clip_semantic_vec(rand_vec())
 
     # ============================================================
     # SEMANTIC GRAPH (links + gravity)
@@ -354,12 +372,17 @@ class SemanticMixin:
                     continue
 
                 dv = sub(vb, va)
-                vecs[a] = add(va, scale(dv, g * w))
+                new_va = add(va, scale(dv, g * w))
+
+                # 🔒 clip updated vector
+                new_va = self._clip_semantic_vec(new_va)
+                vecs[a] = new_va
+                va = new_va  # so next neighbour update starts from clipped vec
 
         # optional maintenance step
         self._decay_links()
 
-     # ============================================================
+    # ============================================================
     # TOKEN DECOMPOSITION (CAREFUL)
     # ============================================================
     def _decompose_token_for_semantics(self, tok):
@@ -698,7 +721,8 @@ class SemanticMixin:
 
         v = self.semantic["vecs"][tok]
         nudge = rand_vec()
-        self.semantic["vecs"][tok] = add(v, scale(nudge, 0.15 * val))
+        updated = add(v, scale(nudge, 0.15 * val))
+        self.semantic["vecs"][tok] = self._clip_semantic_vec(updated)
 
         # also strengthen link between identities
         if hasattr(self, "_link"):
@@ -732,7 +756,8 @@ class SemanticMixin:
             scale=self.IDENTITY_JITTER,
             size=self.IDENTITY_ROOT.shape
         )
-        self.semantic["vecs"][tok] = vec.tolist()
+        vec = self._clip_semantic_vec(vec.tolist())  # 🔒
+        self.semantic["vecs"][tok] = vec
         self.identity_tokens.add(tok)
 
     def is_identity_token(self, tok):
@@ -831,13 +856,13 @@ class SemanticMixin:
 
         axes = self.flavour_axes
 
-        # apply weighted drift toward flavour axes
         newv = list(vec)
         for flavour, weight in f.items():
             axis = axes.get(flavour)
-            if axis is None:
+            if axis is None or weight <= 0.0:
                 continue
             for i in range(len(newv)):
                 newv[i] += lr * weight * axis[i]
 
-        return newv
+        # 🔒 clip before returning
+        return self._clip_semantic_vec(newv)

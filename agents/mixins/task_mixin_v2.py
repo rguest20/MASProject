@@ -11,7 +11,7 @@ class TaskMixinV2(TaskMixin):
     Task system that:
       - keeps numeric help/teaching
       - uses emergent 'concept tokens' for explanations:
-            why <concept-token> <free-language-tail>
+            why <rel-token> <free-language-tail>
       - no English vocabulary
       - concept tokens come from language_mixin_v2
       - supports cooperative numeric comparison tasks
@@ -21,30 +21,41 @@ class TaskMixinV2(TaskMixin):
     # INITIALISATION
     # ------------------------------------------------------
     def _init_task_system(self):
-        # base TaskMixin init (solved/failed/etc.)
+        # base task state
         self.solved_tasks = {}
         self.failed_tasks = {}
         self.last_task_gen = -1
         self.tasks_attempted_this_gen = set()
         self.last_teach_seen = 0
 
-        # for logging co-op choices if desired
+        # optional logging hooks
         self.last_coop_log_gen = -1
 
+        # dialogue bookkeeping
         self.last_dialogue_proposal = None
 
     # ------------------------------------------------------
     # ENTRY POINT
     # ------------------------------------------------------
     def try_solve_tasks(self, task_list, generation_index):
+        # Always keep numeric help / teaching / family broadcast alive
+        try:
+            if hasattr(self, "maybe_answer_numeric_help"):
+                self.maybe_answer_numeric_help()
+        except Exception:
+            pass
 
-        # always process numeric help + teaching + family broadcast
-        if hasattr(self, "maybe_answer_numeric_help"):
-            self.maybe_answer_numeric_help()
-        if hasattr(self, "process_numeric_teaching"):
-            self.process_numeric_teaching()
-        if hasattr(self, "maybe_broadcast_families"):
-            self.maybe_broadcast_families()
+        try:
+            if hasattr(self, "process_numeric_teaching"):
+                self.process_numeric_teaching()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "maybe_broadcast_families"):
+                self.maybe_broadcast_families()
+        except Exception:
+            pass
 
         if not task_list:
             return
@@ -54,11 +65,6 @@ class TaskMixinV2(TaskMixin):
             self.last_task_gen = generation_index
             self.tasks_attempted_this_gen = set()
 
-        # --------------------------------------------------
-        # Filter tasks by:
-        #   - not attempted this gen
-        #   - (optional) assigned_agents, if present
-        # --------------------------------------------------
         my_id = getattr(self, "id", None)
 
         def _is_task_available(t):
@@ -68,7 +74,7 @@ class TaskMixinV2(TaskMixin):
 
             assigned = t.get("assigned_agents", None)
             if assigned is not None and my_id is not None:
-                # only agents explicitly assigned may attempt
+                # only explicitly assigned agents may attempt
                 return my_id in assigned
 
             return True
@@ -78,60 +84,86 @@ class TaskMixinV2(TaskMixin):
             return
 
         task = random.choice(candidates)
-        tid = task["task_id"]
+        tid = task.get("task_id")
+        if tid is None:
+            return
         self.tasks_attempted_this_gen.add(tid)
 
-        # Already solved previously?
+        # already solved previously? skip
         if tid in self.solved_tasks:
             return
 
         ttype = task.get("task_type")
+        resp = None
 
-        # --------------------------------------------------
-        # Dispatch by task_type
-        # --------------------------------------------------
-        if ttype == "compare_numbers":
-            resp = self._solve_compare_numbers(task)
-        elif ttype == "cooperative_compare_numbers":
-            resp = self._solve_cooperative_compare_numbers(task)
-        elif ttype == "semantic_alignment":
-            resp = self._solve_semantic_gap(task)
-        elif ttype == "agreement_dialogue":
-            resp = self._solve_agreement_dialogue(task)
-        elif ttype == "explain_partner":
-            return self._solve_explain_partner_answer(task)
-        elif ttype == "token_compress":
-            return self._solve_token_compression(task)
-        elif ttype == "pref_align":
-            return self._solve_preference_alignment_dialogue(task)
-        else:
+        try:
+            # Dispatch by task_type
+            if ttype == "compare_numbers":
+                resp = self._solve_compare_numbers(task)
+            elif ttype == "cooperative_compare_numbers":
+                resp = self._solve_cooperative_compare_numbers(task)
+            elif ttype == "semantic_alignment":
+                resp = self._solve_semantic_gap(task)
+            elif ttype == "agreement_dialogue":
+                resp = self._solve_agreement_dialogue(task)
+            elif ttype == "explain_partner":
+                resp = self._solve_explain_partner_answer(task)
+            elif ttype == "token_compress":
+                resp = self._solve_token_compression(task)
+            elif ttype == "pref_align":
+                resp = self._solve_preference_alignment_dialogue(task)
+            else:
+                return
+        except Exception as e:
+            # Hard shield: a bad task handler should not kill the agent loop
+            print(f"[ERROR] A{self.id} in task '{ttype}': {type(e).__name__}: {e}")
             return
 
         # record and semantically reinforce justification tokens
         if resp:
             self.solved_tasks[tid] = resp
             if hasattr(self, "_observe_tokens"):
-                toks = resp.get("justification", "").split()
+                toks = resp.get("justification", "") or resp.get("utterance", "") or ""
+                toks = toks.split()
                 if toks:
-                    self._observe_tokens(toks, gain=0.2)
+                    try:
+                        self._observe_tokens(toks, gain=0.2)
+                    except Exception:
+                        pass
 
     # ------------------------------------------------------
     # TASK TYPE: compare_numbers  (single-agent)
     # ------------------------------------------------------
     def _solve_compare_numbers(self, task):
-        data = task["data"]
-        A = data["A"]
-        B = data["B"]
+        """
+        Single-agent numeric comparison:
+        - decode A and B with the reference numeric system if provided
+        - otherwise fall back to this agent's own map
+        - if either fails, request numeric help
+        - otherwise choose the larger (or A if equal)
+        - justification uses emergent rel* concept tokens
+        """
+        data = task.get("data", {}) or {}
+        A = data.get("A", "") or ""
+        B = data.get("B", "") or ""
 
-        valA = self._decode_number_phrase(A)
-        valB = self._decode_number_phrase(B)
+        inst = task.get("instruction", {}) or {}
+        override_map = inst.get("symbol_map", None)
+        override_base = inst.get("base", None)
+
+        # decode using override if present, else local
+        valA = self._decode_number_phrase(A, override_map, override_base)
+        valB = self._decode_number_phrase(B, override_map, override_base)
 
         # 1) request help if number not understood
         if valA is None or valB is None:
             ask = A if len(A.split()) >= len(B.split()) else B
             if ask and hasattr(self, "maybe_request_numeric_help"):
-                self.maybe_request_numeric_help(ask, None)
-            return self._task_fail(task["task_id"])
+                try:
+                    self.maybe_request_numeric_help(ask, None)
+                except Exception:
+                    pass
+            return self._task_fail(task.get("task_id"))
 
         # 2) compare → relation
         if valA > valB:
@@ -147,7 +179,10 @@ class TaskMixinV2(TaskMixin):
         just = self._build_relation_justification(relation)
 
         if hasattr(self, "_observe_tokens"):
-            self._observe_tokens(just.split(), gain=0.15)
+            try:
+                self._observe_tokens(just.split(), gain=0.15)
+            except Exception:
+                pass
 
         # 5) relation-truth teaching (optional, no vocab)
         self._maybe_emit_relation_teach(A, B, relation)
@@ -159,7 +194,10 @@ class TaskMixinV2(TaskMixin):
             conf = 0.55 + 0.2 * random.random()
 
         if hasattr(self, "adjust_trust"):
-            self.adjust_trust(self.id, +0.015, channel=4)
+            try:
+                self.adjust_trust(self.id, +0.015, channel=4)
+            except Exception:
+                pass
 
         return {
             "agent_id": f"A{self.id}",
@@ -177,12 +215,12 @@ class TaskMixinV2(TaskMixin):
           - only agents in task["assigned_agents"] can see it
           - each agent decides whether to:
                 * answer directly
-                * request numeric help (which uses trust + cooperation_weight)
+                * request numeric help
           - both still generate justifications with a relation concept token
         """
-        data = task["data"]
-        A = data["A"]
-        B = data["B"]
+        data = task.get("data", {})
+        A = data.get("A", "")
+        B = data.get("B", "")
 
         assigned = task.get("assigned_agents", [])
         my_id = getattr(self, "id", None)
@@ -196,29 +234,31 @@ class TaskMixinV2(TaskMixin):
                     break
 
         # Decode both sides (may fail)
-        valA = self._decode_number_phrase(A)
-        valB = self._decode_number_phrase(B)
+        inst = task.get("instruction", {})
+        override_map = inst.get("symbol_map")
+        override_base = inst.get("base")
+
+        valA = self._decode_number_phrase(A, override_map, override_base)
+        valB = self._decode_number_phrase(B, override_map, override_base)
 
         # --------------------------------------------------
         # 1) If we can't decode, decide whether to ask partner
         # --------------------------------------------------
         if valA is None or valB is None:
-            # cooperation_weight biases asking for help instead of
-            # silently failing
             coop_w = getattr(self, "cooperation_weight", 0.3)
 
-            # partner trust (channel 4 competence-ish)
+            # partner trust (channel 4 competence-ish), if available
             partner_trust = 0.0
-            if partner_id is not None:
-                ch = getattr(self, "trust_channels", {}).get(partner_id, {})
-                partner_trust = (
-                    0.4 * ch.get("affinity", 0.0)
-                    + 0.3 * ch.get("reliability", 0.0)
-                    + 0.3 * ch.get("competence", 0.0)
-                )
+            tc = getattr(self, "trust_channels", None)
+            if partner_id is not None and isinstance(tc, dict):
+                ch = tc.get(partner_id, {})
+                if isinstance(ch, dict):
+                    partner_trust = (
+                        0.4 * ch.get("affinity", 0.0)
+                        + 0.3 * ch.get("reliability", 0.0)
+                        + 0.3 * ch.get("competence", 0.0)
+                    )
 
-            # simple decision: if we have a partner and cooperation/ trust
-            # is high enough, ask them rather than guess
             if (
                 partner_id is not None
                 and hasattr(self, "maybe_request_numeric_help")
@@ -226,19 +266,25 @@ class TaskMixinV2(TaskMixin):
             ):
                 ask = A if len(A.split()) >= len(B.split()) else B
                 if ask:
-                    self.maybe_request_numeric_help(ask, None)
+                    try:
+                        self.maybe_request_numeric_help(ask, None)
+                    except Exception:
+                        pass
                     self._log_coop_event(
                         task,
                         event="coop_request_help",
                         extra=f"partner=A{partner_id} phrase='{ask}'",
                     )
-                return self._task_fail(task["task_id"])
+                return self._task_fail(task.get("task_id"))
 
-            # otherwise fall back to normal failure
+            # otherwise fall back to normal failure + help request
             ask = A if len(A.split()) >= len(B.split()) else B
             if ask and hasattr(self, "maybe_request_numeric_help"):
-                self.maybe_request_numeric_help(ask, None)
-            return self._task_fail(task["task_id"])
+                try:
+                    self.maybe_request_numeric_help(ask, None)
+                except Exception:
+                    pass
+            return self._task_fail(task.get("task_id"))
 
         # --------------------------------------------------
         # 2) Decode succeeded: compare as usual
@@ -257,19 +303,27 @@ class TaskMixinV2(TaskMixin):
         just = self._build_relation_justification(relation)
 
         if hasattr(self, "_observe_tokens"):
-            self._observe_tokens(just.split(), gain=0.18)
+            try:
+                self._observe_tokens(just.split(), gain=0.18)
+            except Exception:
+                pass
 
         # --------------------------------------------------
         # 3) Cooperative trust shaping
         # --------------------------------------------------
         if partner_id is not None and hasattr(self, "adjust_trust"):
-            # reward partner with a small competence/affinity bump
-            self.adjust_trust(partner_id, +0.03, channel=4)
-            self.adjust_trust(partner_id, +0.02, channel=2)
+            try:
+                self.adjust_trust(partner_id, +0.03, channel=4)
+                self.adjust_trust(partner_id, +0.02, channel=2)
+            except Exception:
+                pass
 
         # mutual self-trust bump
         if hasattr(self, "adjust_trust"):
-            self.adjust_trust(self.id, +0.02, channel=4)
+            try:
+                self.adjust_trust(self.id, +0.02, channel=4)
+            except Exception:
+                pass
 
         # occasionally log a co-op success event
         self._log_coop_event(
@@ -295,7 +349,7 @@ class TaskMixinV2(TaskMixin):
         }
 
     # ------------------------------------------------------
-    # HELPER: build "why <concept-token> tail..." justification
+    # HELPER: build "why <rel-token> tail..." justification
     # ------------------------------------------------------
     def _build_relation_justification(self, relation):
         """
@@ -305,11 +359,6 @@ class TaskMixinV2(TaskMixin):
           - expand through rel_family and semantic neighbors
           - optionally pull in numeric tokens from the last comparison
           - optionally add a short free utterance tail
-
-        Output is a short sequence like:
-            "why relvakrinrin belmukzev zevtoltol ..."
-
-        All pieces are drawn from the agent's own lexicon + semantics.
         """
         sem = getattr(self, "semantic", None)
         concept_tok = None
@@ -332,10 +381,8 @@ class TaskMixinV2(TaskMixin):
 
         # allow rel-family to replace/augment the raw concept token
         if rel_family_tokens:
-            # often start from a "real" rel-family item
             if random.random() < 0.7:
                 rel_chain = [random.choice(rel_family_tokens)]
-            # sometimes add a second rel-token for richness
             if random.random() < 0.4 and len(rel_family_tokens) > 1:
                 candidate = random.choice(rel_family_tokens)
                 if candidate not in rel_chain:
@@ -345,18 +392,24 @@ class TaskMixinV2(TaskMixin):
         neighbor_tokens = []
         if hasattr(self, "_semantic_neighbors"):
             for t in rel_chain:
-                nbrs = self._semantic_neighbors(t, k=3)
+                try:
+                    nbrs = self._semantic_neighbors(t, k=3)
+                except Exception:
+                    nbrs = []
                 if nbrs:
                     neighbor_tokens.append(random.choice(nbrs))
 
         # 4) numeric evidence from last numeric phrase (if any)
         numeric_tokens = []
         if hasattr(self, "_last_tokens") and hasattr(self, "symbol_map"):
-            symvals = set(self.symbol_map.values())
-            for t in (self._last_tokens or []):
-                if t in symvals:
-                    numeric_tokens.append(t)
-            numeric_tokens = numeric_tokens[:2]
+            try:
+                symvals = set(self.symbol_map.values())
+                for t in (self._last_tokens or []):
+                    if t in symvals:
+                        numeric_tokens.append(t)
+                numeric_tokens = numeric_tokens[:2]
+            except Exception:
+                numeric_tokens = []
 
         # 5) tiny emergent tail from general utterance generator
         tail_tokens = []
@@ -380,9 +433,11 @@ class TaskMixinV2(TaskMixin):
             if isinstance(t, str) and t.strip()
         ]
         if not just_tokens:
-            # degenerate case → fully emergent utterance
             if hasattr(self, "produce_utterance"):
-                return self.produce_utterance() or "why"
+                try:
+                    return self.produce_utterance() or "why"
+                except Exception:
+                    return "why"
             return "why"
 
         just_tokens = just_tokens[:8]
@@ -413,10 +468,6 @@ class TaskMixinV2(TaskMixin):
     # HELPER: simple logging hook for cooperative events
     # ------------------------------------------------------
     def _log_coop_event(self, task, event, extra=""):
-        """
-        Writes a one-line log for cooperative tasks so you can
-        verify they’re being used as intended.
-        """
         if not hasattr(self, "api") or self.api is None:
             return
         try:
@@ -432,29 +483,33 @@ class TaskMixinV2(TaskMixin):
             pass
 
     # ------------------------------------------------------
-    # numeric decoding helpers (unchanged)
+    # numeric decoding helpers
     # ------------------------------------------------------
-    def _decode_number_phrase(self, phrase):
+    def _decode_number_phrase(self, phrase, override_map=None, override_base=None):
         if not phrase:
             return None
-        if not hasattr(self, "symbol_map") or not hasattr(self, "counting"):
-            return None
 
-        rev = {v: k for k, v in self.symbol_map.items()}
-        base = self.counting.base
+        sym_map = override_map if override_map else self.symbol_map
+        b = override_base if override_base else self.counting.base
+
+        rev = {v: k for k, v in sym_map.items()}
 
         digits = []
         for t in phrase.split():
             if t not in rev:
                 return None
             d = rev[t]
-            if d < 0 or d >= base:
+            if not (0 <= d < b):
                 return None
             digits.append(d)
 
         out = 0
         for d in digits:
-            out = out * base + d
+            out = out * b + d
+
+        if not isinstance(out, int):
+            return None
+
         return out
 
     def _digits_for_tokens(self, tokens):
@@ -475,9 +530,6 @@ class TaskMixinV2(TaskMixin):
           - token: the word to inspect
           - community_vec: proposed centroid
           - community_confidence: 0..1
-        Mixed-mode behaviour:
-          - if community confidence is high, aligning pulls our vector strongly
-          - if low, aligning is weaker (we keep exploring)
         """
         data = task.get("data", {})
         token = data.get("token")
@@ -485,7 +537,7 @@ class TaskMixinV2(TaskMixin):
         c_conf = float(data.get("community_confidence", 0.0))
 
         if not token or c_vec is None:
-            return None  # cannot answer
+            return None
 
         sem = getattr(self, "semantic", None)
         if not sem:
@@ -493,16 +545,16 @@ class TaskMixinV2(TaskMixin):
 
         vecs = sem.get("vecs", {})
         my_vec = vecs.get(token)
+
+        # If we don't know this token yet, lightly adopt community meaning
         if my_vec is None:
-            # If we don't know this token yet, lightly adopt community meaning
             try:
                 my_vec = [float(x) for x in c_vec]
                 vecs[token] = my_vec[:]
             except Exception:
                 return None
 
-        # --- Decide whether we "agree" or "disagree" ---
-        # simple heuristic: if we're not too far, we agree; else we mark it as misaligned
+        # distance estimate
         try:
             import math
             diff = [a - b for a, b in zip(my_vec, c_vec)]
@@ -510,12 +562,11 @@ class TaskMixinV2(TaskMixin):
         except Exception:
             dist = 0.0
 
+        # simple heuristic: if we're not too far, we agree; else misaligned
         agree = dist < 2.0 or c_conf > 0.7
 
-        # --- Vector update (Mode C) ---
-        # base learning rate is small; boosted for high-confidence tokens
+        # vector update
         if agree:
-            # move toward community
             eta_low = 0.03
             eta_high = 0.25
             eta = eta_low + (eta_high - eta_low) * (c_conf ** 2)
@@ -525,41 +576,37 @@ class TaskMixinV2(TaskMixin):
                 for a, b in zip(my_vec, c_vec)
             ]
         else:
-            # if we explicitly disagree, we only make a tiny self-consistency tweak
-            # (keeps diversity alive while not exploding)
-            eta = 0.02 * (1.0 - c_conf)
+            eta = min(0.005, 0.02 * (1.0 - c_conf))
             new_vec = [
                 a + eta * (a - b)
                 for a, b in zip(my_vec, c_vec)
             ]
 
-        sem["vecs"][token] = new_vec
+        vecs[token] = new_vec
 
-        # --- Reward shaping back to fitness / social memory ---
-        # reward more when aligning with high-confidence community tokens
+        # reward shaping
         base_reward = 0.0
         if agree:
             base_reward = 0.5 * c_conf
         else:
-            # a little reward for resisting low-confidence majority
             base_reward = 0.15 * (1.0 - c_conf)
 
-        # fold into own_fitness and trust
         try:
             self.own_fitness += base_reward
         except Exception:
             pass
 
-        # record that we engaged with a community task
         if hasattr(self, "remember_interaction"):
-            self.remember_interaction(
-                partner_id=-1,  # -1 = "community"
-                outcome=base_reward,
-                offspring_success=None,
-                gen_index=getattr(self, "current_generation", 0),
-            )
+            try:
+                self.remember_interaction(
+                    partner_id=-1,  # -1 = "community"
+                    outcome=base_reward,
+                    offspring_success=None,
+                    gen_index=getattr(self, "current_generation", 0),
+                )
+            except Exception:
+                pass
 
-        # Minimal textual "explanation" if you log responses
         return {
             "token": token,
             "agree": agree,
@@ -568,47 +615,38 @@ class TaskMixinV2(TaskMixin):
             "reward": base_reward,
         }
 
+    # ------------------------------------------------------
+    # AGREEMENT DIALOGUE TASK
+    # ------------------------------------------------------
     def _solve_agreement_dialogue(self, task):
         """
         Dialogue task:
             - Two agents negotiate over a topic (two emergent tokens).
-            - Success comes from: participation, reuse of partner tokens,
-            and converging toward an agreed relation/concept.
-            - There is *no correct answer*; it's a pressure toward shared structure.
+            - Success comes from participation & token reuse pressure.
         """
 
         if not task:
             return None
 
-        topic = task.get("topic", "")
-        assigned = task.get("assigned_agents", [])
-        tid = task.get("task_id")
         my_id = getattr(self, "id", None)
-
+        assigned = task.get("assigned_agents", [])
         if my_id not in assigned:
             return None
 
-        # identify partner
-        partner = None
-        if len(assigned) == 2:
-            partner = assigned[0] if assigned[1] == my_id else assigned[1]
+        topic = task.get("topic", "")
+        tid = task.get("task_id")
 
         # split topic
         try:
             a_tok, b_tok = [t.strip() for t in topic.split("||")]
-        except:
+        except Exception:
             a_tok, b_tok = "su", "tol"
 
-        # ---------------------------------------------------
-        # 1) Produce my proposal: a small utterance linking them
-        # ---------------------------------------------------
-        # Try to build a relation-like chain using existing machinery
+        # 1) Build my proposal: small utterance linking them
         anchor = None
         if hasattr(self, "_ensure_concept_token"):
-            # choose a *specific* conceptual anchor (agree / contrast / relate / bind)
             anchors = ["agree", "align", "relate", "bind"]
             base_anchor = random.choice(anchors)
-
             try:
                 anchor = self._ensure_concept_token(base_anchor, tag="rel")
             except Exception:
@@ -624,19 +662,17 @@ class TaskMixinV2(TaskMixin):
             except Exception:
                 pass
 
-        # free-language tail for creativity
-        tail = ""
+        # free-language tail
+        tail = []
         if hasattr(self, "produce_utterance") and random.random() < 0.6:
-            tail = (self.produce_utterance() or "").split()[:2]
-        else:
-            tail = []
+            try:
+                tail = (self.produce_utterance() or "").split()[:2]
+            except Exception:
+                tail = []
 
-        # assemble proposal
-        # choose which token(s) from the topic to emphasise
+        # choose which topic tokens to emphasise
         candidates = [a_tok, b_tok]
         chosen = []
-
-        # bias toward tokens they have seen before or have vectors for
         sem = getattr(self, "semantic", {})
         vecs = sem.get("vecs", {})
 
@@ -644,15 +680,16 @@ class TaskMixinV2(TaskMixin):
             if tok in vecs:
                 chosen.append(tok)
 
-        # ensure at least one choice even if unknown
         if not chosen:
             chosen = [random.choice(candidates)]
 
-        # sometimes emphasise only one
         if len(chosen) == 2 and random.random() < 0.5:
             chosen = [random.choice(chosen)]
 
-        my_tokens = ["why", anchor] + chosen
+        my_tokens = ["why"]
+        if anchor:
+            my_tokens.append(anchor)
+        my_tokens.extend(chosen)
         my_tokens.extend(nbrs)
         my_tokens.extend(tail)
         my_tokens = [t for t in my_tokens if isinstance(t, str) and t.strip()]
@@ -661,65 +698,33 @@ class TaskMixinV2(TaskMixin):
 
         self.last_dialogue_proposal = my_tokens
 
-        # ---------------------------------------------------
-        # 2) Reward participation immediately
-        # ---------------------------------------------------
+        # participation reward
         try:
-            self.own_fitness += 0.15   # mild reward for engaging
+            self.own_fitness += 0.15
         except Exception:
             pass
 
-        # ---------------------------------------------------
-        # 3) Try to detect partner reuse (agreement pressure)
-        # ---------------------------------------------------
-        reused = False
-        if partner is not None:
-            p = next((ag for ag in self.population if ag.id == partner), None)
-            if p and hasattr(p, "last_dialogue_proposal") and p.last_dialogue_proposal:
-                for tok in p.last_dialogue_proposal:
-                    if tok in chosen:    # only compare chosen tokens
-                        reused = True
-                        break
-
-        # ---------------------------------------------------
-        # 4) Update semantic vectors lightly toward used tokens
-        # ---------------------------------------------------
+        # semantic learning
         if hasattr(self, "_observe_tokens"):
-            self._observe_tokens(my_tokens, gain=0.1)
+            try:
+                self._observe_tokens(my_tokens, gain=0.1)
+            except Exception:
+                pass
 
-        # 4b) Light semantic convergence
-        # Move chosen tokens' vectors slightly toward each other
-        if sem and "vecs" in sem and len(chosen) >= 1:
-            vecs = sem["vecs"]
-            base = vecs.get(chosen[0])
-            if base:
-                for tok in chosen[1:]:
-                    if tok in vecs:
-                        v = vecs[tok]
-                        vecs[tok] = [
-                            v[i] + 0.05 * (base[i] - v[i])
-                            for i in range(len(v))
-                        ]
-
-        # ---------------------------------------------------
-        # 5) Produce output (mostly for logs)
-        # ---------------------------------------------------
         return {
             "agent_id": f"A{self.id}",
             "proposal": proposal,
-            "reused_partner_tokens": reused,
+            "reused_partner_tokens": False,  # left for future use
         }
 
+    # ------------------------------------------------------
+    # EXPLAIN-PARTNER TASK
+    # ------------------------------------------------------
     def _solve_explain_partner_answer(self, task):
         """
         Explain-Partner task.
         Agent sees partner's answer (raw tokens) and must produce
         a paraphrase or interpretation using its own vocabulary.
-
-        Fitness reward comes from:
-        - Participation
-        - Reusing tokens from partner (alignment)
-        - Adding structured relations (for explorers)
         """
 
         if not task:
@@ -727,53 +732,64 @@ class TaskMixinV2(TaskMixin):
 
         my_id = getattr(self, "id", None)
         assigned = task.get("assigned_agents", [])
-        if my_id not in assigned:
+        if my_id not in assigned or len(assigned) != 2:
             return None
 
         partner_id = assigned[0] if assigned[1] == my_id else assigned[1]
         partner_answer = task.get("partner_answer", "")
         partner_tokens = partner_answer.split() if partner_answer else []
 
-        # -----------------------------
-        # Build my explanation
-        # -----------------------------
         # 1) Anchor: relation token
         anchor = None
         if hasattr(self, "_ensure_concept_token"):
-            anchor = self._ensure_concept_token("rel", tag="rel") or "rel"
+            try:
+                anchor = self._ensure_concept_token("rel", tag="rel") or "rel"
+            except Exception:
+                anchor = "rel"
 
         # 2) Try to reuse some partner tokens
         reused = []
+        sem = getattr(self, "semantic", {})
+        vecs = sem.get("vecs", {})
+
         for t in partner_tokens:
-            if t in self.semantic.get("vecs", {}) and random.random() < 0.6:
+            if t in vecs and random.random() < 0.6:
                 reused.append(t)
 
         # 3) Add my own flavour / structure
         structured = []
-        if random.random() < 0.4:
-            structured.append(anchor or "rel")
-        if random.random() < 0.3:
-            structured.append(self.produce_utterance().split()[0])
+        if random.random() < 0.4 and anchor:
+            structured.append(anchor)
+        if hasattr(self, "produce_utterance") and random.random() < 0.3:
+            try:
+                structured.append((self.produce_utterance() or "").split()[0])
+            except Exception:
+                pass
 
         tokens = ["why"] + reused[:3] + structured[:3]
         tokens = [t for t in tokens if isinstance(t, str) and t.strip()]
         explanation = " ".join(tokens) if tokens else "why " + (reused[0] if reused else "su")
 
-        # -----------------------------
         # Fitness
-        # -----------------------------
-        self.own_fitness += 0.1  # participation
+        try:
+            self.own_fitness += 0.1  # participation
+            if reused:
+                self.own_fitness += 0.1
+        except Exception:
+            pass
 
-        if reused:
-            self.own_fitness += 0.1
-            if hasattr(self, "adjust_trust"):
+        if reused and hasattr(self, "adjust_trust"):
+            try:
                 self.adjust_trust(partner_id, +0.02, channel=2)
+            except Exception:
+                pass
 
-        # -----------------------------
         # Learning
-        # -----------------------------
         if hasattr(self, "_observe_tokens"):
-            self._observe_tokens(tokens, gain=0.1)
+            try:
+                self._observe_tokens(tokens, gain=0.1)
+            except Exception:
+                pass
 
         return {
             "agent_id": f"A{self.id}",
@@ -781,15 +797,14 @@ class TaskMixinV2(TaskMixin):
             "tokens_reused": reused,
         }
 
+    # ------------------------------------------------------
+    # TOKEN COMPRESSION / EXPANSION TASK
+    # ------------------------------------------------------
     def _solve_token_compression(self, task):
         """
         Token-Compression / Expansion task.
         If the input utterance is long: compress it.
         If short: expand it.
-
-        This encourages:
-        - H-types to summarise
-        - E-types to elaborate
         """
 
         if not task:
@@ -800,34 +815,35 @@ class TaskMixinV2(TaskMixin):
         if my_id not in assigned:
             return None
 
-        utt = task.get("utterance", "")
+        utt = task.get("utterance", "") or ""
         toks = utt.split()
 
-        # -----------------------------
         # Determine mode
-        # -----------------------------
-        if len(toks) > 6:
-            mode = "compress"
-        else:
-            mode = "expand"
+        mode = "compress" if len(toks) > 6 else "expand"
 
-        # -----------------------------
         # Compression: pick salient roots
-        # -----------------------------
         if mode == "compress":
             roots = []
+            sem = getattr(self, "semantic", {})
+            vecs = sem.get("vecs", {})
             for t in toks:
-                if t in self.semantic.get("vecs", {}) and random.random() < 0.25:
+                if t in vecs and random.random() < 0.25:
                     roots.append(t)
             if not roots:
                 roots = toks[:2]
 
-            # produce a 2–4 token summary
             summary = " ".join(roots[:4])
 
-            self.own_fitness += 0.15  # rewarded for condensation
+            try:
+                self.own_fitness += 0.15
+            except Exception:
+                pass
+
             if hasattr(self, "_observe_tokens"):
-                self._observe_tokens(roots, gain=0.05)
+                try:
+                    self._observe_tokens(roots, gain=0.05)
+                except Exception:
+                    pass
 
             return {
                 "agent_id": f"A{self.id}",
@@ -835,55 +851,62 @@ class TaskMixinV2(TaskMixin):
                 "result": summary,
             }
 
-        # -----------------------------
         # Expansion: add relations + neighbours
-        # -----------------------------
-        else:
-            anchor = None
-            if hasattr(self, "_ensure_concept_token"):
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
                 anchor = self._ensure_concept_token("rel", tag="rel") or "rel"
+            except Exception:
+                anchor = "rel"
 
-            expanded = ["why", anchor] if anchor else ["why"]
+        expanded = ["why"]
+        if anchor:
+            expanded.append(anchor)
 
-            # pull semantic neighbours for elaboration
-            if hasattr(self, "_semantic_neighbors"):
-                for t in toks:
-                    try:
-                        nbs = self._semantic_neighbors(t, k=1)
-                        if nbs:
-                            expanded.append(nbs[0])
-                    except:
-                        pass
+        if hasattr(self, "_semantic_neighbors"):
+            for t in toks:
+                try:
+                    nbs = self._semantic_neighbors(t, k=1)
+                    if nbs:
+                        expanded.append(nbs[0])
+                except Exception:
+                    pass
 
-            # free-language creativity tail
-            if hasattr(self, "produce_utterance") and random.random() < 0.7:
+        if hasattr(self, "produce_utterance") and random.random() < 0.7:
+            try:
                 expanded.extend((self.produce_utterance() or "").split()[:2])
+            except Exception:
+                pass
 
-            # trim to sane size
-            expanded = [x for x in expanded if isinstance(x, str)][:8]
-            sentence = " ".join(expanded)
+        expanded = [x for x in expanded if isinstance(x, str) and x.strip()][:8]
+        sentence = " ".join(expanded)
 
-            self.own_fitness += 0.15  # reward elaboration
-            if hasattr(self, "_observe_tokens"):
+        try:
+            self.own_fitness += 0.15
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
                 self._observe_tokens(expanded, gain=0.05)
+            except Exception:
+                pass
 
-            return {
-                "agent_id": f"A{self.id}",
-                "mode": "expand",
-                "result": sentence,
-            }
+        return {
+            "agent_id": f"A{self.id}",
+            "mode": "expand",
+            "result": sentence,
+        }
 
+    # ------------------------------------------------------
+    # PREFERENCE ALIGNMENT DIALOGUE
+    # ------------------------------------------------------
     def _solve_preference_alignment_dialogue(self, task):
         """
         Preference alignment:
         topic: {"A": tok1, "B": tok2, "pivot": tok3}
         Agents pick which is 'closer' to the pivot token, but
-        the *agreement* matters more than correctness.
-
-        Pressure:
-        - semantic similarity
-        - partner reuse
-        - relation anchoring
+        the agreement matters more than correctness.
         """
 
         if not task:
@@ -898,14 +921,17 @@ class TaskMixinV2(TaskMixin):
         B = task.get("B", "tol")
         P = task.get("pivot", "muk")
 
-        # compute similarity scores if available
+        # compute similarity scores if possible
         simA = 0.0
         simB = 0.0
-        if hasattr(self, "_semantic_similarity"):
+        if hasattr(self, "semantic_distance"):
             try:
-                simA = self._semantic_similarity(A, P)
-                simB = self._semantic_similarity(B, P)
-            except:
+                dA = self.semantic_distance(A, P)
+                dB = self.semantic_distance(B, P)
+                # treat smaller distance as higher similarity
+                simA = -dA
+                simB = -dB
+            except Exception:
                 pass
 
         choice = A if simA >= simB else B
@@ -913,21 +939,35 @@ class TaskMixinV2(TaskMixin):
         # produce a reasoned utterance
         anchor = None
         if hasattr(self, "_ensure_concept_token"):
-            anchor = self._ensure_concept_token("rel", tag="rel") or "rel"
+            try:
+                anchor = self._ensure_concept_token("rel", tag="rel") or "rel"
+            except Exception:
+                anchor = "rel"
 
-        tokens = ["why", anchor, choice, P]
+        tokens = ["why"]
+        if anchor:
+            tokens.append(anchor)
+        tokens.extend([choice, P])
+
         if hasattr(self, "produce_utterance") and random.random() < 0.4:
-            tokens.extend((self.produce_utterance() or "").split()[:1])
+            try:
+                tokens.extend((self.produce_utterance() or "").split()[:1])
+            except Exception:
+                pass
 
         tokens = [t for t in tokens if isinstance(t, str)]
         proposal = " ".join(tokens)
 
-        # reward participation
-        self.own_fitness += 0.12
+        try:
+            self.own_fitness += 0.12
+        except Exception:
+            pass
 
-        # alignment: if partner chose same, coordinator will reinforce trust
         if hasattr(self, "_observe_tokens"):
-            self._observe_tokens(tokens, gain=0.07)
+            try:
+                self._observe_tokens(tokens, gain=0.07)
+            except Exception:
+                pass
 
         return {
             "agent_id": f"A{self.id}",

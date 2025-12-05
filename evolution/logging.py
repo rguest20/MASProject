@@ -322,29 +322,9 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                     f.write("  No agent responses.\n")
                     continue
 
-                # Try to compute the correct answer using a reference agent
-                correct = None
-                ref_agent = None
-                for ag in coordinator.agents:
-                    if hasattr(ag, "counting"):
-                        ref_agent = ag
-                        break
-
-                if ref_agent is not None:
-                    try:
-                        tokA = data.get("A")
-                        tokB = data.get("B")
-                        valA = ref_agent.counting.decode_token(tokA)
-                        valB = ref_agent.counting.decode_token(tokB)
-                        if valA is not None and valB is not None:
-                            if valA > valB:
-                                correct = tokA
-                            elif valB > valA:
-                                correct = tokB
-                            else:
-                                correct = "equal"
-                    except Exception:
-                        correct = None
+                # Read ground-truth computed when task was created
+                gt = task.get("ground_truth", {})
+                correct = gt.get("answer_phrase", None)
 
                 if correct is not None:
                     f.write(f"  Correct answer (ref agent) = {correct}\n")

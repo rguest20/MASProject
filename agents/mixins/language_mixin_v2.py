@@ -516,24 +516,24 @@ class LanguageMixinV2():
         vecs[new_tok] = [t + n for t, n in zip(target, noise)]
 
         if tag is not None:
-            # --- rel-family branching logic ---
-            if tag == "rel":
-                # create a 'relX' extension, where X is emergent noise-based suffix
-                suffix = self._invent_token(prefix="rel", concept=False)
-                new_tok = suffix   # relka, relrin, relmuk, etc.
+            # # --- rel-family branching logic ---
+            # if tag == "rel":
+            #     # create a 'relX' extension, where X is emergent noise-based suffix
+            #     suffix = self._invent_token(prefix="rel", concept=False)
+            #     new_tok = suffix   # relka, relrin, relmuk, etc.
 
-                noise = self._randvec(scale=0.05)
-                vecs[new_tok] = [t + n for t, n in zip(target, noise)]
+            #     noise = self._randvec(scale=0.05)
+            #     vecs[new_tok] = [t + n for t, n in zip(target, noise)]
 
-                # record in rel-family map
-                self.semantic["rel_family"][new_tok] = {
-                    "parent": tag,
-                    "vec": vecs[new_tok],
-                    "age": 0,
-                    "use_count": 0
-                }
+            #     # record in rel-family map
+            #     self.semantic["rel_family"][new_tok] = {
+            #         "parent": tag,
+            #         "vec": vecs[new_tok],
+            #         "age": 0,
+            #         "use_count": 0
+            #     }
 
-                return new_tok
+            #     return new_tok
             self.semantic["concept_tokens"][tag] = new_tok
 
         return new_tok
@@ -1354,6 +1354,93 @@ class LanguageMixinV2():
         }
 
         return self.semantic_gaps
+
+    # =====================================================
+    # FLAVOUR HOMEOSTASIS v2 (Soft Prefix/Family Control)
+    # =====================================================
+    def apply_flavour_homeostasis(
+        self,
+        community_map,
+        soft_strength=0.15,       # 0.05–0.25 gentle
+        dominance_thresh=0.22,    # >22% of usage → unstable dominance
+        scarcity_thresh=0.05,     # <5% usage → encourage
+        min_usage=3
+    ):
+        """
+        Soft morphological homeostasis:
+        • detects prefix-dominant trends in the *community* semantic map
+        • gently dampens local usage of over-dominant families (e.g., rel, muk)
+        • gently boosts underrepresented families
+        • does NOT override emergent grammar; only biases future tendencies
+        """
+        if not community_map:
+            return
+        c_vecs = community_map.get("vecs", {})
+        c_counts = community_map.get("counts", {})
+        if not c_vecs or not c_counts:
+            return
+
+        # -----------------------------------------------------
+        # 1. Extract token families via prefix detection
+        # -----------------------------------------------------
+        def prefix(tok):
+            for p in ["rel", "rin", "bel", "tol", "muk", "zev", "tar", "su", "lo"]:
+                if tok.startswith(p):
+                    return p
+            return "_misc"
+
+        fam_totals = {}
+        total = 0
+
+        for tok, count in c_counts.items():
+            if count < min_usage:
+                continue
+            fam = prefix(tok)
+            fam_totals[fam] = fam_totals.get(fam, 0) + count
+            total += count
+
+        if total == 0:
+            return
+
+        fam_freq = {f: fam_totals[f] / total for f in fam_totals}
+
+        dominant = {f for f, p in fam_freq.items() if p >= dominance_thresh}
+        scarce   = {f for f, p in fam_freq.items() if p <= scarcity_thresh}
+
+        if not dominant and not scarce:
+            return
+
+        # -----------------------------------------------------
+        # 2. Adjust local semantic vectors + generation bias
+        # -----------------------------------------------------
+        vecs = self.semantic.get("vecs", {})
+        tokens_meta = self.semantic.get("tokens", {})
+
+        for tok, meta in tokens_meta.items():
+            fam = prefix(tok)
+            v = vecs.get(tok)
+            if v is None:
+                continue
+
+            # dampen dominant families
+            if fam in dominant:
+                vecs[tok] = [x * (1 - soft_strength) for x in v]
+                meta["generation_bias"] = meta.get("generation_bias", 1.0) * (1 - 0.5 * soft_strength)
+
+            # boost scarce families
+            elif fam in scarce:
+                vecs[tok] = [x * (1 + soft_strength) for x in v]
+                meta["generation_bias"] = meta.get("generation_bias", 1.0) * (1 + 0.4 * soft_strength)
+
+        # -----------------------------------------------------
+        # 3. Store diagnostics
+        # -----------------------------------------------------
+        self.semantic.setdefault("flavour_homeostasis", {})
+        self.semantic["flavour_homeostasis"] = {
+            "dominant": list(dominant),
+            "scarce": list(scarce),
+            "freqs": fam_freq,
+        }
 
     # =====================================================
     # PHASE C: Agents propose semantic-alignment tasks
