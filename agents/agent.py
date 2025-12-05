@@ -10,6 +10,7 @@ from agents.mixins.action_mixin import ActionMixin
 from agents.mixins.language_mixin import LanguageMixin
 from agents.mixins.language_mixin_v2 import LanguageMixinV2
 from agents.mixins.semantic_mixin import SemanticMixin
+from agents.mixins.semantic_stabilisation_mixin import SemanticStabilisationMixin
 from agents.mixins.social_mixin import SocialMixin
 from agents.mixins.teaching_mixin import TeachingMixin
 from agents.mixins.mutation_mixin import MutationMixin
@@ -29,6 +30,7 @@ class Agent(
     ActionMixin,
     ReasoningMixin,
     SemanticMixin,
+    SemanticStabilisationMixin,
     LanguageMixinV2,
     SocialMixin,
     TeachingMixin,

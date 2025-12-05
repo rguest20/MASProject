@@ -112,6 +112,26 @@ class TaskMixinV2(TaskMixin):
                 resp = self._solve_token_compression(task)
             elif ttype == "pref_align":
                 resp = self._solve_preference_alignment_dialogue(task)
+            elif ttype == "describe_concept":
+                resp = self._solve_describe_concept(task)
+            elif ttype == "action_reconstruction":
+                resp = self._solve_action_reconstruction(task)
+            elif ttype == "similarity_debate":
+                resp = self._solve_similarity_debate(task)
+            elif ttype == "narrative_chain":
+                resp = self._solve_narrative_chain(task)
+            elif ttype == "role_assignment":
+                resp = self._solve_role_assignment(task)
+            elif ttype == "misunderstanding_detection":
+                resp = self._solve_misunderstanding_detection(task)
+            elif ttype == "property_attribution":
+                resp = self._solve_property_attribution(task)
+            elif ttype == "verb_noun_compat":
+                resp = self._solve_verb_noun_compat(task)
+            elif ttype == "definition_swap":
+                resp = self._solve_definition_swap(task)
+            elif ttype == "prediction_task":
+                resp = self._solve_prediction_task(task)
             else:
                 return
         except Exception as e:
@@ -975,4 +995,805 @@ class TaskMixinV2(TaskMixin):
             "utterance": proposal,
             "simA": simA,
             "simB": simB,
+        }
+
+    # ======================================================
+    # LANGUAGE EMERGENCE TASKS
+    # ======================================================
+
+    # ------------------------------
+    # 1. DESCRIBE–CONCEPT TASK
+    # ------------------------------
+    def _solve_describe_concept(self, task):
+        """
+        Task:
+        task_type: "describe_concept"
+        data: {"target_token": <tok>}
+
+        Agent produces an utterance describing / circling the target token.
+        Encourages noun-like anchors + property-ish neighbours.
+        """
+        data = task.get("data", {}) or {}
+        target = data.get("target_token")
+
+        sem = getattr(self, "semantic", {})
+        vecs = sem.get("vecs", {})
+
+        # Fallback if target missing
+        if not target:
+            if vecs:
+                target = random.choice(list(vecs.keys()))
+            else:
+                target = "su"
+
+        # Make sure we know about the token
+        if hasattr(self, "_ensure_vec"):
+            self._ensure_vec(target)
+
+        # anchor concept token (ref/rel-like)
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token(str(target), tag="ref")
+            except Exception:
+                anchor = None
+
+        # semantic neighbours of target
+        neighbours = []
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                neighbours = self._semantic_neighbors(target, k=3)
+            except Exception:
+                neighbours = []
+
+        # optional free tail
+        tail = []
+        if hasattr(self, "produce_utterance") and random.random() < 0.4:
+            try:
+                tail = (self.produce_utterance() or "").split()[:2]
+            except Exception:
+                tail = []
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.append(target)
+        toks.extend(neighbours)
+        toks.extend(tail)
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:8]
+        utter = " ".join(toks) if toks else target
+
+        try:
+            self.own_fitness += 0.10
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.12)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "mode": "describe",
+            "target": target,
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 2. ACTION RECONSTRUCTION TASK
+    # ------------------------------
+    def _solve_action_reconstruction(self, task):
+        """
+        Task:
+        task_type: "action_reconstruction"
+        data: {"from": tokA, "to": tokB}
+
+        Agent proposes an 'action' token that links A → B.
+        Encourages verb-ish/process tokens and transform semantics.
+        """
+        data = task.get("data", {}) or {}
+        a_tok = data.get("from", "su")
+        b_tok = data.get("to", "tol")
+
+        if hasattr(self, "_ensure_vec"):
+            self._ensure_vec(a_tok)
+            self._ensure_vec(b_tok)
+
+        candidates = []
+
+        # neighbours of A
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                n_a = self._semantic_neighbors(a_tok, k=4)
+            except Exception:
+                n_a = []
+        else:
+            n_a = []
+
+        # neighbours of B
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                n_b = self._semantic_neighbors(b_tok, k=4)
+            except Exception:
+                n_b = []
+        else:
+            n_b = []
+
+        # intersection first (tokens that “live” near both)
+        inter = list(set(n_a) & set(n_b))
+        if inter:
+            candidates.extend(inter)
+        else:
+            candidates.extend(n_a[:2])
+            candidates.extend(n_b[:2])
+
+        # if nothing, invent a token via language organ
+        act_tok = None
+        for t in candidates:
+            if isinstance(t, str) and t.strip():
+                act_tok = t
+                break
+
+        if act_tok is None:
+            if hasattr(self, "_invent_token"):
+                try:
+                    act_tok = self._invent_token(prefix="muk")
+                except Exception:
+                    act_tok = "muk"
+            else:
+                act_tok = "muk"
+
+        # build utterance: 'why' + action + A + B + tiny tail
+        tail = []
+        if hasattr(self, "produce_utterance") and random.random() < 0.4:
+            try:
+                tail = (self.produce_utterance() or "").split()[:1]
+            except Exception:
+                tail = []
+
+        toks = ["why", act_tok, a_tok, b_tok] + tail
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:8]
+        utter = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.12
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.10)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "action_token": act_tok,
+            "from": a_tok,
+            "to": b_tok,
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 3. SIMILARITY DEBATE TASK
+    # ------------------------------
+    def _solve_similarity_debate(self, task):
+        """
+        Task:
+        task_type: "similarity_debate"
+        data: {"A": tok1, "B": tok2, "C": tok3}
+
+        Agent picks which pair is closest in semantic space and
+        produces an utterance referencing them.
+        """
+        data = task.get("data", {}) or {}
+        A = data.get("A", "su")
+        B = data.get("B", "tol")
+        C = data.get("C", "muk")
+
+        pairs = [(A, B), (A, C), (B, C)]
+        best_pair = pairs[0]
+        best_score = None
+
+        if hasattr(self, "semantic_distance"):
+            try:
+                for x, y in pairs:
+                    d = self.semantic_distance(x, y)
+                    s = -d  # smaller distance = higher score
+                    if best_score is None or s > best_score:
+                        best_score = s
+                        best_pair = (x, y)
+            except Exception:
+                pass
+
+        x, y = best_pair
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("similar", tag="rel")
+            except Exception:
+                anchor = None
+
+        tail = []
+        if hasattr(self, "produce_utterance") and random.random() < 0.4:
+            try:
+                tail = (self.produce_utterance() or "").split()[:2]
+            except Exception:
+                tail = []
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.extend([x, y])
+        toks.extend(tail)
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:8]
+        utter = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.10
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.10)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "chosen_pair": [x, y],
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 4. NARRATIVE CHAIN TASK
+    # ------------------------------
+    def _solve_narrative_chain(self, task):
+        """
+        Task:
+        task_type: "narrative_chain"
+        data: {"start": tok}
+
+        Agent builds a short token chain:
+            start → x → y → z
+        Encourages temporal & causal structure.
+        """
+        data = task.get("data", {}) or {}
+        start = data.get("start", "su")
+
+        if hasattr(self, "_ensure_vec"):
+            self._ensure_vec(start)
+
+        chain = [start]
+        cur = start
+
+        for _ in range(3):
+            nxt = None
+            if hasattr(self, "_semantic_neighbors"):
+                try:
+                    nbs = self._semantic_neighbors(cur, k=3)
+                except Exception:
+                    nbs = []
+                if nbs:
+                    nxt = random.choice(nbs)
+            if not nxt and hasattr(self, "produce_utterance"):
+                try:
+                    nxt = (self.produce_utterance() or "").split()[0]
+                except Exception:
+                    nxt = None
+            if not nxt:
+                nxt = "su"
+            chain.append(nxt)
+            cur = nxt
+
+        toks = chain[:]
+        if random.random() < 0.5:
+            toks.insert(0, "why")
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:10]
+        utter = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.14
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.10)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "chain": chain,
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 5. ROLE ASSIGNMENT TASK
+    # ------------------------------
+    def _solve_role_assignment(self, task):
+        """
+        Task:
+        task_type: "role_assignment"
+        data: {"event": tok}
+
+        Agent chooses a 'doer' and 'receiver' for an event token.
+        Encourages proto subject/object structure.
+        """
+        data = task.get("data", {}) or {}
+        event = data.get("event", "muk")
+
+        if hasattr(self, "_ensure_vec"):
+            self._ensure_vec(event)
+
+        # candidate "doers": identity tokens or neighbours
+        doer = None
+        receiver = None
+
+        # try identity tokens first
+        ids = list(getattr(self, "identity_tokens", []) or [])
+        random.shuffle(ids)
+        if ids:
+            doer = random.choice(ids)
+
+        # neighbours for receiver
+        neigh = []
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                neigh = self._semantic_neighbors(event, k=4)
+            except Exception:
+                neigh = []
+
+        for t in neigh:
+            if isinstance(t, str) and t != event:
+                receiver = t
+                break
+
+        if doer is None:
+            doer = "agent_{}".format(self.id)
+        if receiver is None:
+            receiver = event
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("role", tag="rel")
+            except Exception:
+                anchor = None
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.extend([doer, event, receiver])
+
+        if hasattr(self, "produce_utterance") and random.random() < 0.4:
+            try:
+                toks.extend((self.produce_utterance() or "").split()[:1])
+            except Exception:
+                pass
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:9]
+        utter = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.13
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.09)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "event": event,
+            "doer": doer,
+            "receiver": receiver,
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 6. MISUNDERSTANDING DETECTION TASK
+    # ------------------------------
+    def _solve_misunderstanding_detection(self, task):
+        """
+        Task:
+        task_type: "misunderstanding_detection"
+        data: {"utterance": <str>, "partner_id": int}
+
+        Agent produces an interpretation / paraphrase.
+        Encourages meta-language & repair tokens.
+        """
+        data = task.get("data", {}) or {}
+        utt = data.get("utterance", "") or ""
+        partner_id = data.get("partner_id", None)
+
+        if hasattr(self, "_parse_utterance"):
+            try:
+                toks_in = self._parse_utterance(utt)
+            except Exception:
+                toks_in = utt.split()
+        else:
+            toks_in = utt.split()
+
+        toks_in = [t for t in toks_in if isinstance(t, str) and t.strip()]
+
+        # reuse some tokens as "evidence"
+        reused = []
+        for t in toks_in:
+            if random.random() < 0.5:
+                reused.append(t)
+        reused = reused[:3]
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("interpret", tag="ref")
+            except Exception:
+                anchor = None
+
+        # add one neighbour to represent "different" reading
+        alt = []
+        if toks_in and hasattr(self, "_semantic_neighbors") and random.random() < 0.6:
+            try:
+                nbs = self._semantic_neighbors(toks_in[0], k=2)
+                if nbs:
+                    alt.append(nbs[0])
+            except Exception:
+                pass
+
+        out = ["why"]
+        if anchor:
+            out.append(anchor)
+        out.extend(reused)
+        out.extend(alt)
+
+        if hasattr(self, "produce_utterance") and random.random() < 0.4:
+            try:
+                out.extend((self.produce_utterance() or "").split()[:1])
+            except Exception:
+                pass
+
+        out = [t for t in out if isinstance(t, str) and t.strip()][:8]
+        explanation = " ".join(out) if out else "why"
+
+        try:
+            self.own_fitness += 0.10
+        except Exception:
+            pass
+
+        if reused and hasattr(self, "adjust_trust") and partner_id is not None:
+            try:
+                self.adjust_trust(partner_id, +0.015, channel=2)
+            except Exception:
+                pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(out, gain=0.08)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "interpretation": explanation,
+            "reused_tokens": reused,
+        }
+
+    # ------------------------------
+    # 7. PROPERTY ATTRIBUTION TASK
+    # ------------------------------
+    def _solve_property_attribution(self, task):
+        """
+        Task:
+        task_type: "property_attribution"
+        data: {"target_token": tok}
+
+        Agent proposes 1–2 'properties' for the target.
+        Pushes adjective-like behaviour.
+        """
+        data = task.get("data", {}) or {}
+        target = data.get("target_token", "su")
+
+        if hasattr(self, "_ensure_vec"):
+            self._ensure_vec(target)
+
+        neighbours = []
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                neighbours = self._semantic_neighbors(target, k=5)
+            except Exception:
+                neighbours = []
+
+        props = []
+        for t in neighbours:
+            if t != target and isinstance(t, str):
+                props.append(t)
+            if len(props) >= 2:
+                break
+
+        if not props:
+            if hasattr(self, "_invent_token"):
+                try:
+                    props.append(self._invent_token(prefix="zev"))
+                except Exception:
+                    props.append("zev")
+            else:
+                props.append("zev")
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("property", tag="ref")
+            except Exception:
+                anchor = None
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.append(target)
+        toks.extend(props)
+
+        if hasattr(self, "produce_utterance") and random.random() < 0.4:
+            try:
+                toks.extend((self.produce_utterance() or "").split()[:1])
+            except Exception:
+                pass
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:9]
+        utter = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.11
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.09)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "target": target,
+            "properties": props,
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 8. VERB–NOUN COMPATIBILITY TASK
+    # ------------------------------
+    def _solve_verb_noun_compat(self, task):
+        """
+        Task:
+        task_type: "verb_noun_compat"
+        data: {"verb_token": tok}
+
+        Agent proposes likely 'arguments' (nouns) for a verb-like token.
+        """
+        data = task.get("data", {}) or {}
+        verb = data.get("verb_token", "muk")
+
+        if hasattr(self, "_ensure_vec"):
+            self._ensure_vec(verb)
+
+        # candidate nouns from neighbours + recent tokens
+        cands = []
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                cands.extend(self._semantic_neighbors(verb, k=6))
+            except Exception:
+                pass
+
+        recent = getattr(self, "recent_tokens", [])[-15:]
+        for t in recent:
+            if isinstance(t, str):
+                cands.append(t)
+
+        cands = [t for t in cands if isinstance(t, str) and t != verb]
+        random.shuffle(cands)
+        args = list(dict.fromkeys(cands))[:3]  # unique, max 3
+
+        if not args:
+            args = ["su"]
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("bind", tag="rel")
+            except Exception:
+                anchor = None
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.append(verb)
+        toks.extend(args)
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:9]
+        utter = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.11
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.09)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "verb": verb,
+            "arguments": args,
+            "utterance": utter,
+        }
+
+    # ------------------------------
+    # 9. DEFINITION SWAP TASK
+    # ------------------------------
+    def _solve_definition_swap(self, task):
+        """
+        Task:
+        task_type: "definition_swap"
+        data: {"token": tok, "partner_definition": <str>}
+
+        Agent restates or tweaks a partner's definition.
+        Encourages synonymy + fine-grained concept structure.
+        """
+        data = task.get("data", {}) or {}
+        token = data.get("token", "su")
+        partner_def = data.get("partner_definition", "") or ""
+
+        if hasattr(self, "_parse_utterance"):
+            try:
+                p_toks = self._parse_utterance(partner_def)
+            except Exception:
+                p_toks = partner_def.split()
+        else:
+            p_toks = partner_def.split()
+
+        p_toks = [t for t in p_toks if isinstance(t, str) and t.strip()]
+
+        # reuse some partner tokens
+        reused = []
+        for t in p_toks:
+            if random.random() < 0.5:
+                reused.append(t)
+        reused = reused[:3]
+
+        # add one or two neighbours of token as "extra nuance"
+        nuance = []
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                nuance = self._semantic_neighbors(token, k=2)
+            except Exception:
+                nuance = []
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("define", tag="ref")
+            except Exception:
+                anchor = None
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.append(token)
+        toks.extend(reused)
+        toks.extend(nuance)
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:10]
+        utter = " ".join(toks) if toks else token
+
+        try:
+            self.own_fitness += 0.12
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.10)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "token": token,
+            "utterance": utter,
+            "reused_tokens": reused,
+        }
+
+    # ------------------------------
+    # 10. PREDICTION TASK
+    # ------------------------------
+    def _solve_prediction_task(self, task):
+        """
+        Task:
+        task_type: "prediction_task"
+        data: {"prefix": <utterance>}
+
+        Agent predicts a likely next token and produces a brief 'why' chain.
+        """
+        data = task.get("data", {}) or {}
+        prefix = data.get("prefix", "") or ""
+
+        if hasattr(self, "_parse_utterance"):
+            try:
+                toks_in = self._parse_utterance(prefix)
+            except Exception:
+                toks_in = prefix.split()
+        else:
+            toks_in = prefix.split()
+
+        toks_in = [t for t in toks_in if isinstance(t, str) and t.strip()]
+        if not toks_in:
+            toks_in = ["su"]
+
+        last = toks_in[-1]
+
+        # choose candidate via neighbours
+        candidate = None
+        if hasattr(self, "_semantic_neighbors"):
+            try:
+                nbs = self._semantic_neighbors(last, k=3)
+            except Exception:
+                nbs = []
+            if nbs:
+                candidate = random.choice(nbs)
+
+        if candidate is None and hasattr(self, "produce_utterance"):
+            try:
+                candidate = (self.produce_utterance() or "").split()[0]
+            except Exception:
+                candidate = None
+
+        if candidate is None:
+            candidate = "tol"
+
+        anchor = None
+        if hasattr(self, "_ensure_concept_token"):
+            try:
+                anchor = self._ensure_concept_token("predict", tag="rel")
+            except Exception:
+                anchor = None
+
+        toks = ["why"]
+        if anchor:
+            toks.append(anchor)
+        toks.append(last)
+        toks.append(candidate)
+
+        toks = [t for t in toks if isinstance(t, str) and t.strip()][:8]
+        explanation = " ".join(toks)
+
+        try:
+            self.own_fitness += 0.10
+        except Exception:
+            pass
+
+        if hasattr(self, "_observe_tokens"):
+            try:
+                self._observe_tokens(toks, gain=0.08)
+            except Exception:
+                pass
+
+        return {
+            "agent_id": f"A{self.id}",
+            "prefix_last": last,
+            "prediction": candidate,
+            "utterance": explanation,
         }

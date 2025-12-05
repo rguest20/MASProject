@@ -51,7 +51,7 @@ class SemanticMixin:
 
         sem.setdefault("vecs", {})
         sem.setdefault("learning_rate", 0.05)
-        sem.setdefault("gravity", 0.02)
+        sem.setdefault("gravity", 0.008)
         sem.setdefault("cooccur_gain", 0.10)
         sem.setdefault("dictionary_gain", 0.20)
 
@@ -156,13 +156,17 @@ class SemanticMixin:
             return vec
 
         v = np.array(vec, dtype=float)
+
+        # kill NaNs
+        v = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+
         n = np.linalg.norm(v)
-        if not np.isfinite(n) or n == 0.0:
-            # reset totally broken vectors to small random
-            return self._rand_vec(dim=len(v))
+        if n == 0.0:
+            return self._rand_vec(len(v))
 
         if n > max_norm:
             v = v * (max_norm / n)
+
         return v.tolist()
 
     def _rand_vec(self, dim=32):
@@ -337,6 +341,8 @@ class SemanticMixin:
         """Bidirectional weighted link with slight asymmetry."""
         if a == b:
             return
+        
+        w = self.stab_adjust_link_weight(a, b, w)
 
         # Make sure semantic structures exist
         self._ensure_semantic()
@@ -361,23 +367,33 @@ class SemanticMixin:
         vecs = self.semantic["vecs"]
         links = self.semantic["links"]
 
-        for a, nbrs in list(links.items()):
+        # Compute influence score per token
+        scored = []
+        for tok, nbrs in links.items():
+            if not nbrs:
+                continue
+            score = sum(abs(w) for w in nbrs.values())
+            scored.append((tok, score))
+
+        # Select top-K tokens by influence
+        K = 12
+        top_tokens = [tok for tok, score in sorted(scored, key=lambda x: x[1], reverse=True)[:K]]
+
+        for a in top_tokens:
+            nbrs = links[a]
             va = vecs.get(a)
             if va is None:
                 continue
-
-            for b, w in list(nbrs.items()):
+            
+            for b, w in nbrs.items():
                 vb = vecs.get(b)
                 if vb is None:
                     continue
 
                 dv = sub(vb, va)
                 new_va = add(va, scale(dv, g * w))
-
-                # 🔒 clip updated vector
-                new_va = self._clip_semantic_vec(new_va)
                 vecs[a] = new_va
-                va = new_va  # so next neighbour update starts from clipped vec
+                va = new_va  # iterative update
 
         # optional maintenance step
         self._decay_links()
@@ -441,6 +457,10 @@ class SemanticMixin:
     # at top of file
     def observe_utterance(self, utter, gain_scale=1.0):
         tokens = self._decompose_token_for_semantics(utter)
+        
+        for tok in tokens:
+            self.stab_note_token_usage(tok)
+        
         self._observe_tokens(tokens, gain=self.semantic["cooccur_gain"] * gain_scale)
 
 # inside SemanticMixin._observe_tokens, right at entry:
@@ -588,6 +608,12 @@ class SemanticMixin:
         self._gravity_step()
         # gentle, usage-driven pull toward latent flavour attractors
         self._apply_flavour_attractors()
+
+        vecs = self.semantic["vecs"]
+        for key, vec in list(vecs.items()):
+            vecs[key] = self._clip_semantic_vec(vec)
+
+        self.semantic_stabilisation_tick()
 
     # ============================================================
     # TEACHING SUPPORT: EXPORT + PREDICT

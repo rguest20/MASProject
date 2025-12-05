@@ -385,12 +385,9 @@ class Coordinator:
     # ---------------------------------------------------------
     def _update_task_weights_homeostasis(self, verbose=False):
         """
-        Adjust self.task_weights based on archetype distribution.
-        Implements a simple negative feedback loop:
-          - if an archetype falls below low_frac → boost tasks that reward it
-          - if an archetype exceeds high_frac → damp those tasks
+        Update task weights for both old numeric tasks and new
+        linguistic-emergence tasks.
         """
-        # refresh archetype fractions
         self._update_archetype_stats()
         dist = self.archetype_stats
 
@@ -400,58 +397,103 @@ class Coordinator:
         min_coop = cfg["min_frac_coop"]
         max_coop = cfg["max_frac_coop"]
 
-        # start from neutral base
+        # --- Base weights ---
         w = {
+            # numeric / structural
             "compare_numbers": 1.0,
             "reconcile_counts": 1.0,
             "agreement_dialogue": 1.0,
+
+            # exploratory
+            "describe_concept": 0.7,
+            "narrative_chain": 0.7,
+            "prediction_task": 0.6,
+
+            # alignment / cooperative
+            "similarity_debate": 0.7,
+            "role_assignment": 0.6,
+            "misunderstanding_detection": 0.7,
+            "definition_swap": 0.6,
+
+            # pattern / habit reinforcement
+            "action_reconstruction": 0.7,
+            "property_attribution": 0.7,
+            "verb_noun_compat": 0.7,
         }
 
-        # ---- Explorers ↔ compare_numbers (and some dialogue to spread novelty) ----
+        # ------------------------------
+        # Explorers homeostasis
+        # ------------------------------
         frac_exp = dist.get("explorer", 0.0)
-
         if frac_exp < low:
-            # too few explorers → encourage exploration / distinction-making
-            w["compare_numbers"] *= 2.0
-            w["agreement_dialogue"] *= 1.3  # propagates new relations
+            # need novelty + expansion
+            w["describe_concept"] *= 2.2
+            w["narrative_chain"] *= 2.0
+            w["prediction_task"] *= 1.8
         elif frac_exp > high:
-            # too many explorers → slow them a bit
-            w["compare_numbers"] *= 0.4
+            # too chaotic: damp exploration
+            w["describe_concept"] *= 0.5
+            w["narrative_chain"] *= 0.5
+            w["prediction_task"] *= 0.6
 
-        # ---- Habit learners ↔ reconcile_counts (compression / pattern reinforcement) ----
+        # ------------------------------
+        # Habit learners homeostasis
+        # ------------------------------
         frac_habit = dist.get("habit", 0.0)
-
         if frac_habit < low:
-            # too few pattern-compressors → push them
-            w["reconcile_counts"] *= 2.0
+            # need stability / structure
+            w["action_reconstruction"] *= 2.0
+            w["property_attribution"] *= 2.0
+            w["verb_noun_compat"] *= 2.0
+            w["reconcile_counts"] *= 1.5
         elif frac_habit > high:
-            # too many “rote” minds → ease up
-            w["reconcile_counts"] *= 0.4
+            # too rigid → loosen the pattern
+            w["action_reconstruction"] *= 0.5
+            w["property_attribution"] *= 0.5
+            w["verb_noun_compat"] *= 0.6
+            w["reconcile_counts"] *= 0.5
 
-        # ---- Cooperators ↔ agreement_dialogue (alignment / trust-building) ----
+        # ------------------------------
+        # Cooperators homeostasis
+        # ------------------------------
         frac_coop = dist.get("cooperator", 0.0)
-
         if frac_coop < min_coop:
             w["agreement_dialogue"] *= 2.0
+            w["similarity_debate"] *= 1.7
+            w["misunderstanding_detection"] *= 1.8
+            w["role_assignment"] *= 1.6
+            w["definition_swap"] *= 1.5
         elif frac_coop > max_coop:
-            # society over-synchronised → reduce alignment comfort
-            w["agreement_dialogue"] *= 0.6
+            # over-alignment → push diversity
+            w["agreement_dialogue"] *= 0.5
+            w["similarity_debate"] *= 0.6
+            w["role_assignment"] *= 0.7
+            w["definition_swap"] *= 0.7
 
-        # Optionally: give loners a little nudge towards social tasks
+        # ------------------------------
+        # Loners homeostasis
+        # ------------------------------
         frac_lon = dist.get("loner", 0.0)
         if frac_lon > 0.15:
-            # more loners → shift probability away from solo-ish tasks
-            w["compare_numbers"] *= 0.8
-            w["agreement_dialogue"] *= 1.2
+            # nudge *into* socially grounding tasks
+            w["agreement_dialogue"] *= 1.3
+            w["misunderstanding_detection"] *= 1.3
+            w["similarity_debate"] *= 1.2
+            w["role_assignment"] *= 1.2
 
-        # ---- normalise ----
-        total_w = sum(w.values())
-        if total_w <= 0:
-            # fallback to uniform
+            # reduce purely self-oriented tasks
+            w["prediction_task"] *= 0.7
+            w["narrative_chain"] *= 0.7
+
+        # ------------------------------
+        # Normalise
+        # ------------------------------
+        total = sum(w.values())
+        if total <= 0:
             n = len(w)
             self.task_weights = {k: 1.0 / n for k in w}
         else:
-            self.task_weights = {k: v / total_w for k, v in w.items()}
+            self.task_weights = {k: v / total for k, v in w.items()}
 
         if verbose:
             print("[HOMEOSTASIS] archetypes:", dist)
@@ -461,14 +503,7 @@ class Coordinator:
     #  Build tasks for a generation
     # ---------------------------------------------------------
     def _build_task_batch(self, num_tasks: int, gen: int):
-        """
-        Build a batch of mixed tasks for this generation.
-        Homeostasis nudges the mix based on archetype diversity.
-        """
-        # update task weights based on current archetype ecology
-        self._update_task_weights_homeostasis(
-            verbose=(gen % 20 == 0)   # e.g. log every 20 gens
-        )
+        self._update_task_weights_homeostasis(verbose=(gen % 20 == 0))
 
         batch = []
         for _ in range(num_tasks):
@@ -480,8 +515,33 @@ class Coordinator:
                 task = self.generate_reconcile_counts_task()
             elif ttype == "agreement_dialogue":
                 task = self.generate_agreement_dialogue_task()
+
+            # ---------- new linguistic task builders ----------
+            elif ttype == "describe_concept":
+                task = self.generate_describe_concept_task()
+            elif ttype == "narrative_chain":
+                task = self.generate_narrative_chain_task()
+            elif ttype == "prediction_task":
+                task = self.generate_prediction_task()
+
+            elif ttype == "similarity_debate":
+                task = self.generate_similarity_debate_task()
+            elif ttype == "role_assignment":
+                task = self.generate_role_assignment_task()
+            elif ttype == "misunderstanding_detection":
+                task = self.generate_misunderstanding_detection_task()
+            elif ttype == "definition_swap":
+                task = self.generate_definition_swap_task()
+
+            elif ttype == "action_reconstruction":
+                task = self.generate_action_reconstruction_task()
+            elif ttype == "property_attribution":
+                task = self.generate_property_attribution_task()
+            elif ttype == "verb_noun_compat":
+                task = self.generate_verb_noun_compat_task()
+
             else:
-                # fallback (shouldn't happen)
+                # safety fallback
                 task = self.generate_numeric_compare_task()
 
             batch.append(task)
@@ -1917,6 +1977,7 @@ class Coordinator:
             if self.generation_index % 5 == 0:
                 if hasattr(a, "detect_semantic_families"):
                     a.detect_semantic_families()
+                a.prune_families()
 
             if self.generation_index % 100 == 0:
                 a.debug_dump_semantics()
@@ -1926,6 +1987,7 @@ class Coordinator:
             a._sanitize_vector_dims()
             if hasattr(a, "family_reinforcement_update"):
                 a.family_reinforcement_update()
+            a.family_soft_decay()
             # --- Update community semantic centroid ---
 
         # --- Community Semantics ---
@@ -1967,6 +2029,216 @@ class Coordinator:
         except Exception as e:
             print("TASK LOAD ERROR:", e)
             return []
+
+    def generate_describe_concept_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        # Pick a token to be described.
+        # Prefer tokens with vectors, else random fallback.
+        all_tokens = list(getattr(ag.semantic, "vecs", {}).keys())
+        if not all_tokens:
+            target = "su"
+        else:
+            target = random.choice(all_tokens)
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "describe_concept",
+            "assigned_agents": [ag.id],
+            "data": {"target_token": target},
+            "responses": {}
+        }
+
+    def generate_narrative_chain_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        # Choose a start token
+        toks = list(getattr(ag.semantic, "vecs", {}).keys())
+        start = random.choice(toks) if toks else "su"
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "narrative_chain",
+            "assigned_agents": [ag.id],
+            "data": {"start": start},
+            "responses": {}
+        }
+
+    def generate_prediction_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        # produce a random prefix from the agent
+        try:
+            prefix = ag.produce_utterance()
+        except Exception:
+            prefix = "su tol"
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "prediction_task",
+            "assigned_agents": [ag.id],
+            "data": {"prefix": prefix},
+            "responses": {}
+        }
+
+    def generate_similarity_debate_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        # grab three candidate tokens
+        vecs = getattr(ag.semantic, "vecs", {})
+        toks = list(vecs.keys())
+
+        if len(toks) < 3:
+            toks = ["su", "tol", "muk"]
+
+        A, B, C = random.sample(toks, 3) if len(toks) >= 3 else ("su", "tol", "muk")
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "similarity_debate",
+            "assigned_agents": [ag.id],
+            "data": {"A": A, "B": B, "C": C},
+            "responses": {}
+        }
+
+    def generate_role_assignment_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        vecs = getattr(ag.semantic, "vecs", {})
+        events = list(vecs.keys()) or ["muk"]
+        event = random.choice(events)
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "role_assignment",
+            "assigned_agents": [ag.id],
+            "data": {"event": event},
+            "responses": {}
+        }
+
+    def generate_misunderstanding_detection_task(self):
+        if len(self.agents) < 2:
+            return None
+
+        a, b = random.sample(self.agents, 2)
+
+        # Ask agent a to produce something ambiguous
+        try:
+            utt = a.produce_utterance()
+        except Exception:
+            utt = "su tol rin"
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "misunderstanding_detection",
+            "assigned_agents": [b.id],   # b interprets a
+            "data": {
+                "utterance": utt,
+                "partner_id": a.id
+            },
+            "responses": {}
+        }
+
+    def generate_definition_swap_task(self):
+        if len(self.agents) < 2:
+            return None
+
+        a, b = random.sample(self.agents, 2)
+
+        # choose a token to define
+        vecs = getattr(a.semantic, "vecs", {})
+        toks = list(vecs.keys()) or ["su"]
+        tok = random.choice(toks)
+
+        # partner's definition
+        try:
+            partner_def = a.produce_utterance()
+        except Exception:
+            partner_def = tok + " su tol"
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "definition_swap",
+            "assigned_agents": [b.id],
+            "data": {
+                "token": tok,
+                "partner_definition": partner_def
+            },
+            "responses": {}
+        }
+
+    def generate_action_reconstruction_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        vecs = getattr(ag.semantic, "vecs", {})
+        toks = list(vecs.keys()) or ["su", "tol", "muk"]
+
+        if len(toks) < 2:
+            a_tok, b_tok = "su", "tol"
+        else:
+            a_tok, b_tok = random.sample(toks, 2)
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "action_reconstruction",
+            "assigned_agents": [ag.id],
+            "data": {"from": a_tok, "to": b_tok},
+            "responses": {}
+        }
+
+    def generate_property_attribution_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        vecs = getattr(ag.semantic, "vecs", {})
+        toks = list(vecs.keys()) or ["su"]
+        target = random.choice(toks)
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "property_attribution",
+            "assigned_agents": [ag.id],
+            "data": {"target_token": target},
+            "responses": {}
+        }
+
+    def generate_verb_noun_compat_task(self):
+        if not self.agents:
+            return None
+
+        ag = random.choice(self.agents)
+
+        vecs = getattr(ag.semantic, "vecs", {})
+        toks = list(vecs.keys()) or ["muk"]
+        verb = random.choice(toks)
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "verb_noun_compat",
+            "assigned_agents": [ag.id],
+            "data": {"verb_token": verb},
+            "responses": {}
+        }
 
     def generate_numeric_compare_task(self):
         """

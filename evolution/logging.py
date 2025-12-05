@@ -300,21 +300,23 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
         active_tasks = getattr(coordinator, "active_tasks", []) or []
         if not active_tasks:
             f.write("  (no active tasks)\n")
+
         else:
             for task in active_tasks:
                 ttype = task.get("task_type")
                 tid = task.get("task_id")
                 data = task.get("data", {})
+                inst = task.get("instruction", {})
 
-                if ttype != "compare_numbers":
-                    continue
+                f.write(f"\nTask {tid} ({ttype}):\n")
 
-                f.write(f"\nTask {tid} (compare_numbers): data={data}\n")
-
-                # Collect responses from agents
+                # ---------------------------------------------------------
+                # Collect all agent responses for this task
+                # ---------------------------------------------------------
                 responses = []
                 for ag in coordinator.agents:
-                    resp = getattr(ag, "solved_tasks", {}).get(tid)
+                    solved = getattr(ag, "solved_tasks", {})
+                    resp = solved.get(tid)
                     if resp:
                         responses.append(resp)
 
@@ -322,26 +324,132 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                     f.write("  No agent responses.\n")
                     continue
 
-                # Read ground-truth computed when task was created
-                gt = task.get("ground_truth", {})
-                correct = gt.get("answer_phrase", None)
+                # =========================================================
+                # TASK TYPE: compare_numbers
+                # =========================================================
+                if ttype == "compare_numbers":
+                    f.write(f"  data={data}\n")
 
-                if correct is not None:
-                    f.write(f"  Correct answer (ref agent) = {correct}\n")
+                    gt = task.get("ground_truth", {})
+                    correct = gt.get("answer_phrase", None)
 
-                for r in responses:
-                    ans = r["answer"]
-                    conf = r.get("confidence", 0.0)
-                    just = r.get("justification", "")
-                    outcome = ""
-                    if correct is not None and ans in (data.get("A"), data.get("B")):
-                        if correct == "equal":
+                    if correct is not None:
+                        f.write(f"  Correct answer (ref agent) = {correct}\n")
+
+                    for r in responses:
+                        ans = r.get("answer")
+                        conf = r.get("confidence", 0.0)
+                        just = r.get("justification", "")
+
+                        # correctness check
+                        if correct is None:
+                            outcome = ""
+                        elif correct == "equal":
                             outcome = " (equal-case)"
+                        elif ans == correct:
+                            outcome = " (correct)"
                         else:
-                            outcome = " (correct)" if ans == correct else " (wrong)"
+                            outcome = " (wrong)"
 
-                    f.write(
-                        f"  Agent {r['agent_id']}: answer={ans} "
-                        f"conf={conf:.3f}{outcome} "
-                        f"justification='{just}'\n"
-                    )
+                        f.write(
+                            f"  Agent {r['agent_id']}: answer={ans} "
+                            f"conf={conf:.3f}{outcome} "
+                            f"justification='{just}'\n"
+                        )
+
+                # =========================================================
+                # TASK TYPE: reconcile_counts
+                # =========================================================
+                elif ttype == "reconcile_counts":
+                    f.write(f"  utterance='{data.get('utterance', '')}'\n")
+
+                    for r in responses:
+                        mode = r.get("mode", "?")
+                        result = r.get("result", "")
+                        f.write(
+                            f"  Agent {r['agent_id']}: mode={mode} result='{result}'\n"
+                        )
+
+                # =========================================================
+                # TASK TYPE: agreement_dialogue
+                # =========================================================
+                elif ttype == "agreement_dialogue":
+                    topic = task.get("topic", "")
+                    f.write(f"  topic='{topic}'\n")
+
+                    for r in responses:
+                        prop = r.get("proposal", "")
+                        reuse = r.get("reused_partner_tokens", False)
+                        f.write(
+                            f"  Agent {r['agent_id']}: proposal='{prop}' reused={reuse}\n"
+                        )
+
+                # =========================================================
+                # TASK TYPE: explain_partner
+                # =========================================================
+                elif ttype == "explain_partner":
+                    partner_answer = task.get("partner_answer", "")
+                    f.write(f"  partner_answer='{partner_answer}'\n")
+
+                    for r in responses:
+                        expl = r.get("explanation", "")
+                        reused = r.get("tokens_reused", [])
+                        f.write(
+                            f"  Agent {r['agent_id']}: explanation='{expl}' reused={reused}\n"
+                        )
+
+                # =========================================================
+                # TASK TYPE: semantic_alignment
+                # =========================================================
+                elif ttype == "semantic_alignment":
+                    token = data.get("token")
+                    f.write(f"  token='{token}'\n")
+
+                    for r in responses:
+                        agree = r.get("agree", False)
+                        dist = r.get("distance", 0.0)
+                        reward = r.get("reward", 0.0)
+                        f.write(
+                            f"  Agent {r['agent_id']}: agree={agree} dist={dist:.3f} reward={reward:.3f}\n"
+                        )
+
+                # =========================================================
+                # TASK TYPE: preference_alignment_dialogue
+                # =========================================================
+                elif ttype == "pref_align":
+                    A = task.get("A")
+                    B = task.get("B")
+                    P = task.get("pivot")
+
+                    f.write(f"  A={A}, B={B}, pivot={P}\n")
+
+                    for r in responses:
+                        choice = r.get("choice")
+                        utter = r.get("utterance", "")
+                        simA = r.get("simA", 0.0)
+                        simB = r.get("simB", 0.0)
+                        f.write(
+                            f"  Agent {r['agent_id']}: choice={choice} simA={simA:.3f} simB={simB:.3f} utter='{utter}'\n"
+                        )
+
+                # =========================================================
+                # TASK TYPE: token_compress
+                # =========================================================
+                elif ttype == "token_compress":
+                    utt = task.get("utterance", "")
+                    f.write(f"  input='{utt}'\n")
+
+                    for r in responses:
+                        mode = r.get("mode")
+                        result = r.get("result", "")
+                        f.write(
+                            f"  Agent {r['agent_id']}: mode={mode} result='{result}'\n"
+                        )
+
+                # =========================================================
+                # UNKNOWN OR NEW TASK TYPE
+                # =========================================================
+                else:
+                    f.write("  (no specialised logger; dumping raw responses)\n")
+                    for r in responses:
+                        f.write(f"    {r}\n")

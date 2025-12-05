@@ -399,6 +399,7 @@ class LanguageMixinV2():
             return random.choice(pool_tokens)
 
         probs = [e / total for e in exps]
+        probs = self.stab_adjust_token_probs(pool_tokens, probs)
         return random.choices(pool_tokens, probs)[0]
 
     # =====================================================
@@ -842,7 +843,7 @@ class LanguageMixinV2():
         for _ in range(length - 1):
             neighbors = []
             if hasattr(self, "_semantic_neighbors"):
-                neighbors = self._semantic_neighbors(cur, k=6)
+                neighbors = self._semantic_neighbors(cur, k=3)
 
             # include family neighbors if we have them
             fam_nbrs = self._family_neighbors(cur)
@@ -976,11 +977,13 @@ class LanguageMixinV2():
         return fid
 
     def _assign_token_family(self, tok, fid, strength=0.1, confidence=0.1):
+        """Assign token to family with correct soft confidence."""
         sem = self.semantic
         tsem = self._ensure_token_semantic(tok)
 
-        if fid not in sem["families"]:
-            self._create_family()
+        fam = sem["families"].get(fid)
+        if fam is None:
+            return
 
         tsem["families"][fid] = {
             "strength": float(strength),
@@ -988,13 +991,25 @@ class LanguageMixinV2():
             "age": 0,
             "last_reinforced": getattr(self, "generation_index", 0),
         }
+        fam["members"][tok] = float(strength)
 
-        sem["families"][fid]["members"][tok] = float(strength)
-
-    def detect_semantic_families(self, radius=0.55, min_members=3, max_families_per_gen=2):
+    def detect_semantic_families(self, radius=0.4, min_members=4, max_families_per_gen=2):
+        """
+        FAMILY SYSTEM V2 — Step 1 (cluster gating) + Step 2 (soft confidence).
+        Creates a family ONLY if:
+            • cluster ≥ 4 tokens
+            • centroid variance low
+            • avg usage ≥ 20
+            • cohesion ≥ 0.65
+        """
         sem = self.semantic
         vecs = sem["vecs"]
-        tokens = list(vecs.keys())
+        tmeta = sem["tokens"]
+
+        tokens = [t for t in vecs.keys()
+                if t not in self.numeric_semantic.keys()
+                and t not in sem["concept_tokens"].values()
+                and not self._is_identity_like(t)]
 
         if len(tokens) < min_members:
             return
@@ -1002,55 +1017,80 @@ class LanguageMixinV2():
         visited = set()
         made = 0
 
-        numeric_set = set(self.numeric_semantic.keys())
-        concept_set = set(sem["concept_tokens"].values())
+        def sqdist_no0(a, b):
+            return sum((a[i] - b[i])**2 for i in range(1, len(a)))
 
         for i, t in enumerate(tokens):
             if t in visited:
                 continue
-            if t in numeric_set:
-                continue
-            if t in concept_set:
-                continue
-
             center = vecs[t]
             cluster = [t]
             visited.add(t)
 
+            # Build naive radius cluster
             for u in tokens[i+1:]:
                 if u in visited:
                     continue
-                d2 = sum(
-                    (a - b) ** 2
-                    for j, (a, b) in enumerate(zip(center, vecs[u]))
-                    if j != 0
-                )
-                if d2 ** 0.5 <= radius:
+                if sqdist_no0(center, vecs[u])**0.5 <= radius:
                     cluster.append(u)
                     visited.add(u)
 
-            if len(cluster) >= min_members:
-                dim = len(center)
-                raw = [0.0] * dim
-                for tok in cluster:
-                    v = vecs[tok]
-                    for d in range(dim):
-                        raw[d] += v[d]
+            # STEP 1: clustering gate
+            if len(cluster) < 4:
+                continue
 
-                raw = [x / len(cluster) for x in raw]
+            # Compute centroid properly
+            dim = len(center)
+            cv = [0.0]*dim
+            for tok in cluster:
+                v = vecs[tok]
+                for d in range(dim):
+                    cv[d] += v[d]
+            cv = [x/len(cluster) for x in cv]
 
-                centroid = []
-                for d, x in enumerate(raw):
-                    centroid.append(x * (0.1 if d == 0 else 1.0))
+            # centroid variance
+            vari = 0.0
+            for tok in cluster:
+                v = vecs[tok]
+                vari += sum((v[d]-cv[d])**2 for d in range(1, dim))
+            vari /= len(cluster)
 
-                fid = self._create_family(centroid=centroid)
+            # avg usage count
+            usage_vals = [tmeta[tok]["usage_count"] for tok in cluster if tok in tmeta]
+            avg_usage = sum(usage_vals)/len(usage_vals) if usage_vals else 0
 
-                for tok in cluster:
-                    self._assign_token_family(tok, fid, 0.4, 0.2)
+            # cohesion: mean 1 - normalised distance
+            dists = []
+            for tok in cluster:
+                d = (sqdist_no0(vecs[tok], cv) ** 0.5)
+                dists.append(d)
+            cohesion = 1.0 - (sum(dists)/len(dists))  # crude but effective
 
-                made += 1
-                if made >= max_families_per_gen:
-                    break
+            # gating
+            if vari > 0.015:
+                continue
+            if avg_usage < 20:
+                continue
+            if cohesion < 0.65:
+                continue
+
+            # STEP 2: compute soft confidence
+            size_term = min(1.0, len(cluster)/12)
+            freq_term = min(1.0, avg_usage/50)
+            var_term  = max(0.0, 1.0 - 8*vari)
+            raw = 0.3*size_term + 0.3*cohesion + 0.2*freq_term + 0.2*var_term
+            conf = min(0.92, raw)
+
+            # create family
+            fid = self._create_family(centroid=cv)
+            sem["families"][fid]["confidence"] = conf
+
+            for tok in cluster:
+                self._assign_token_family(tok, fid, strength=0.4, confidence=conf)
+
+            made += 1
+            if made >= max_families_per_gen:
+                break
 
     def family_reinforcement_update(self, drift=0.02):
         sem = self.semantic
@@ -1072,6 +1112,29 @@ class LanguageMixinV2():
                     for a, c in zip(v, centroid)
                 ]
                 vecs[tok] = newv
+        
+    def family_soft_decay(self, decay=0.003, min_strength=0.02):
+        """
+        Gently weakens family ties over time unless they are actively reinforced.
+        Prevents mega-families and semantic collapse.
+        """
+        sem = self.semantic
+        fams = sem.get("families", {})
+        tokens = sem.get("tokens", {})
+
+        for fid, fam in fams.items():
+            members = fam.get("members", {})
+            for tok, strength in list(members.items()):
+                new_s = strength - decay
+                if new_s <= min_strength:
+                    # remove token from family — too weak
+                    del members[tok]
+                    if tok in tokens and fid in tokens[tok].get("families", {}):
+                        del tokens[tok]["families"][fid]
+                else:
+                    members[tok] = new_s
+                    if tok in tokens and fid in tokens[tok].get("families", {}):
+                        tokens[tok]["families"][fid]["strength"] = new_s
 
     # =====================================================
     # FAMILY GOSSIP
@@ -1108,38 +1171,52 @@ class LanguageMixinV2():
         return out
 
     def maybe_broadcast_families(self):
+        """
+        FAMILY SYSTEM V2 — Step 3: teaching gate
+        Only broadcast sometimes, and more likely for high-confidence families.
+        """
         if not hasattr(self, "api") or self.api is None:
             return
 
-        td = self.traits.get("teaching_drive", 0.5)
-        cw = self.traits.get("cooperation_weight", 0.5)
-        base_p = 0.08 + 0.12 * td + 0.10 * cw
+        sem = self.semantic
+        fams = sem["families"]
 
-        if random.random() > base_p:
+        # nothing to broadcast
+        if not fams:
             return
 
-        self.name_families()
-        snaps = self.export_family_snapshot()
-        if not snaps:
-            return
+        # pick top N families
+        ordered = sorted(
+            fams.items(),
+            key=lambda kv: kv[1].get("confidence", 0.0),
+            reverse=True,
+        )[:3]
 
-        lines = []
-        for fs in snaps:
-            name = fs.get("name") or "none"
-            conf = fs.get("confidence", 0.2)
-            centroid = fs.get("centroid") or []
-            c_str = ",".join(f"{x:.3f}" for x in centroid)
+        for fid, fam in ordered:
+            conf = fam.get("confidence", 0.2)
+
+            # Step 3: probability depends on confidence (max 25%)
+            p = min(0.05 + 0.3 * conf, 0.25)
+            if random.random() > p:
+                continue
+
+            # ensure name exists
+            if fam.get("name") is None:
+                fam["name"] = self._invent_token(prefix="f", concept=True)
+
+            # write gossip line
+            c = fam.get("centroid")
+            if not c:
+                continue
+            c_str = ",".join(f"{x:.3f}" for x in c)
             line = (
-                f"A{self.id} teach_family "
-                f"name={name} conf={conf:.3f} centroid={c_str}"
+                f"A{self.id} teach_family name={fam['name']} "
+                f"conf={conf:.3f} centroid={c_str}\n"
             )
-            lines.append(line)
-
-        try:
-            payload = "\n".join(lines) + "\n"
-            self.api.append_text("/family_gossip.txt", payload, scope="world")
-        except Exception:
-            pass
+            try:
+                self.api.append_text("/family_gossip.txt", line, scope="world")
+            except Exception:
+                pass
 
     def _integrate_family_gossip_line(self, line):
         if "teach_family" not in line:
@@ -1228,6 +1305,26 @@ class LanguageMixinV2():
             })
             fam["confidence"] = min(1.0, fam.get("confidence", 0.3) + 0.02)
             return
+
+    def prune_families(self, limit=250):
+        """FAMILY SYSTEM V2 — Step 4: prune excess families."""
+        fams = self.semantic["families"]
+        if len(fams) <= limit:
+            return
+
+        # sort weakest first: (confidence, size)
+        ranked = sorted(
+            fams.items(),
+            key=lambda kv: (
+                kv[1].get("confidence", 0.0),
+                len(kv[1].get("members", {}))
+            )
+        )
+
+        remove_n = int(len(fams) * 0.20)  # drop bottom 20%
+        for fid, _ in ranked[:remove_n]:
+            del fams[fid]
+            
     # =====================================================
     # EXPECTATION
     # =====================================================

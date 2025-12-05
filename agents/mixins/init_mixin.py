@@ -28,6 +28,7 @@ class InitMixin:
             "_init_agent_identity_semantics",
             "_init_emotion_system",
             "_init_semantic_system",
+            "_init_semantic_stabilisation",
             "_init_language_system",
             "_init_social_system",
             "_init_teaching_system",
