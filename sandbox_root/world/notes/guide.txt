@@ -1,1 +1,0 @@
-Try drawing on the canvas.

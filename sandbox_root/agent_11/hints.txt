@@ -1,4 +1,0 @@
-Try reading /world/notes/welcome.txt
-Try reading /world/dictionary.json
-Try writing to /world/notes.txt
-Try drawing pixels on the world canvas
