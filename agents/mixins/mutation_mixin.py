@@ -102,7 +102,8 @@ class MutationMixin:
                 parent_counting = parent_agent.counting
 
                 # inherit base + symbols
-                self.counting = CountingSystem(owner=self)
+                if not hasattr(self, "counting"):
+                    raise RuntimeError("CountingSystem must be initialised in InitMixin")
                 self.counting.base = parent_counting.base
                 self.counting.symbols = dict(parent_counting.symbols)
                 self.counting.inverse = dict(parent_counting.inverse)
@@ -113,10 +114,12 @@ class MutationMixin:
 
             except Exception:
                 # fallback: new counting system
-                self.counting = CountingSystem(owner=self)
+                if not hasattr(self, "counting"):
+                    raise RuntimeError("CountingSystem must be initialised in InitMixin")
         else:
             # brand new lineage
-            self.counting = CountingSystem(owner=self)
+            if not hasattr(self, "counting"):
+                raise RuntimeError("CountingSystem must be initialised in InitMixin")
 
         # Ensure symbols exist for all digits
         try:

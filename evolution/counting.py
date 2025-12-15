@@ -8,14 +8,18 @@ class CountingSystem:
 
     POSSIBLE_BASES = [4, 6, 8, 10, 12, 16]
 
-    def __init__(self, *args, **kwargs):
-        self.owner = None
+    def __init__(self, owner, *args, **kwargs):
+        self.owner = owner
         self.base = random.choice(self.POSSIBLE_BASES)
         self.symbols = {}       # number (int) → token (str)
         self.inverse = {}       # token (str) → number (int)
         self._init_seed_symbols()
         self.symbol_map = {}
         self.inverse_symbol_map = {}
+
+    def _register_numeric_token(self, tok):
+        if self.owner and hasattr(self.owner, "register_numeric_token"):
+            self.owner.register_numeric_token(tok)
 
     def decode_token(self, tok):
         """
@@ -111,6 +115,7 @@ class CountingSystem:
         # Store it: dynamic expansion
         self.symbol_map[new_val] = tok
         self.inverse_symbol_map[tok] = new_val
+        self._register_numeric_token(tok)
         return new_val
 
     def set_symbol_map(self, symbol_map):
@@ -129,6 +134,7 @@ class CountingSystem:
             token = random.choice(consonants) + random.choice(vowels)
             self.symbols[n] = token
             self.inverse[token] = n
+            self._register_numeric_token(token)
 
     def interpret(self, raw_number):
         """
@@ -165,6 +171,7 @@ class CountingSystem:
             if k not in self.symbols and random.random() < 0.3:
                 self.symbols[k] = v
                 self.inverse[v] = k
+                self._register_numeric_token(v)
 
     def mutate(self):
         """
@@ -193,7 +200,8 @@ class CountingSystem:
             tok = random.choice(consonants) + random.choice(vowels)
             self.symbols[n] = tok
             self.inverse[tok] = n
-
+            self._register_numeric_token(tok)
+        
         return tok
 
 
@@ -217,6 +225,7 @@ class CountingSystem:
             if not hasattr(o, "symbols"):
                 continue
             for k, v in o.symbols.items():
+                self._register_numeric_token(v)
                 if k not in self.symbols:
                     # occasionally borrow symbol directly
                     if random.random() < 0.5:

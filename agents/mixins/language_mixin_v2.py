@@ -87,7 +87,8 @@ class LanguageMixinV2():
         # --------------------------------------------
         # 4) Counting + reasoning organ
         # --------------------------------------------
-        self.counting = CountingSystem(owner=self)
+        if not hasattr(self, "counting"):
+            raise RuntimeError("CountingSystem must be initialised in InitMixin")
         self.language = LanguageOrgan(
             owner=self,
             trust_threshold=self.traits.get("trust_threshold", 0.5),
@@ -946,6 +947,7 @@ class LanguageMixinV2():
                     self._ensure_vec(t)
 
                 if toks:
+                    toks = [t for t in toks if t not in self.numeric_semantic]
                     self._observe_language_tokens(
                         toks, gain=self.semantic.get("dictionary_gain", 0.1)
                     )

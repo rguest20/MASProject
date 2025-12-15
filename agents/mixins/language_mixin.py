@@ -33,7 +33,8 @@ class LanguageMixin:
 
         self.symbol_drift = {s: 0.0 for s in SYLLABLES}
 
-        self.counting = CountingSystem(owner=self)
+        if not hasattr(self, "counting"):
+            raise RuntimeError("CountingSystem must be initialised in InitMixin")
         self.language = LanguageOrgan(
             owner=self,
             trust_threshold=self.traits.get("trust_threshold", 0.5),
@@ -422,8 +423,7 @@ class LanguageMixin:
             if not hasattr(self, "symbol_map"):
                 self.symbol_map = {}
             if not hasattr(self, "counting"):
-                from evolution.counting import CountingSystem
-                self.counting = CountingSystem(owner=self)
+                raise RuntimeError("CountingSystem must be initialised in InitMixin")
 
             # Do we know base?
             base = getattr(self.counting, "base", 16)
@@ -466,8 +466,12 @@ class LanguageMixin:
                 # Integrate semantically
                 if hasattr(self, "_ensure_vec"):
                     self._ensure_vec(tok)
-                if hasattr(self, "_observe_tokens"):
-                    self._observe_tokens([tok], gain=0.3)
+                v = self.semantic["vecs"].get(tok)
+                if v:
+                    self.semantic["vecs"][tok] = [
+                        v[0] * 0.99 + 0.01 * v[0],
+                        *v[1:]
+                    ]
 
             if updated:
                 # Re-sync counting system with new symbol map

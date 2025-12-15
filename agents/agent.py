@@ -56,9 +56,10 @@ class Agent(
     Mixins provide everything else.
     """
 
-    def __init__(self, id, api=None):
+    def __init__(self, id, token_registry, api=None):
         super().__init__(id)
-        self._post_init()   # init hooks in mixins
+        self.token_registry = token_registry
+        self._post_init()
 
 
     def debug_dump_semantics(self, limit=200):

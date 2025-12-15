@@ -10,6 +10,7 @@ from evolution.challenge import ChallengeSystem
 from evolution.counting import CountingSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
 from evolution.programs import run_program, safe, mutate_program
+from evolution.mixins.global_registry import GlobalTokenRegistry
 
 from evolution.behaviours.orchestration import orchestrate_action
 
@@ -68,10 +69,11 @@ IDLE_TAX               = 1.0
 MIN_PARTICIPATION      = 1
 
 
-class Coordinator:
+class Coordinator():
     def __init__(self):
         self.active_tasks = self.load_tasks()
         self.semantic_alignment_tasks = []
+        self.token_registry = GlobalTokenRegistry()
 
         self.cached_dictionary_words = None
         self.semantic_seeds = {"words": [], "synonyms": [], "antonyms": []}
@@ -80,7 +82,7 @@ class Coordinator:
 
         # Core state
         self.generation_index = 0
-        self.agents = [Agent(i) for i in range(POP_SIZE)]
+        self.agents = [Agent(id=i, token_registry=self.token_registry) for i in range(POP_SIZE)]
         self.last_utterances = {}   # agent_id -> utterance
         self.challenge = ChallengeSystem()
         self.action_queue = []
@@ -139,6 +141,21 @@ class Coordinator:
             "min_frac_coop": 0.25,
             "max_frac_coop": 0.75,
         }
+
+        self.task_scorers = {
+            # already / obvious
+            "compare_numbers": self.score_compare_numbers,
+            "reconcile_counts": self.score_reconcile_counts,
+            "pref_align": self.score_pref_align,
+
+            # coordination pressure
+            "agreement_dialogue": self.score_agreement_dialogue,
+            "similarity_debate": self.score_similarity_debate,
+            "definition_swap": self.score_definition_swap,
+            "misunderstanding_detection": self.score_misunderstanding_detection,
+        }
+
+        self.completed_tasks = []
 
     # -----------------------------
     # Helpers
@@ -1175,105 +1192,6 @@ class Coordinator:
 
         return [chooser, p2, p3]
 
-    # -----------------------------
-    # Child creation (with learning inheritance)
-    # -----------------------------
-    # def make_child(self, p1, p2, p3, new_id):
-    #     """
-    #     Tri-parent child with:
-    #     - damped + noisy trait inheritance
-    #     - program mutation based on a random parent's program
-    #     - cultural inheritance of utterance associations + symbol drift
-    #     - fresh social memory (to avoid runaway cliques), but you can
-    #       carry a tiny seed if desired (kept empty here for robustness)
-    #     """
-    #     child = Agent(new_id)
-
-    #     # 1) Traits (pull toward neutral + noise)
-    #     for key in child.traits:
-    #         inherited = random.choice([p1.traits[key], p2.traits[key], p3.traits[key]])
-    #         inherited = self.damp_trait(inherited, strength=0.08)
-    #         inherited += random.uniform(-0.02, 0.02)
-    #         child.traits[key] = self._clamp(inherited, 0.0, 1.0)
-
-    #     # memory traits
-    #     child.memory_influence = random.choice([p1.memory_influence, p2.memory_influence, p3.memory_influence])
-    #     child.memory_decay_rate = self._clamp(
-    #         random.choice([p1.memory_decay_rate, p2.memory_decay_rate, p3.memory_decay_rate]) + random.uniform(-0.02, 0.02),
-    #         0.0, 1.0
-    #     )
-
-    #     # 2) Program + counting system inheritance 🌱
-    #     # Pick one parent for genetic & cultural inheritance
-    #     chosen_parent = random.choice([p1, p2, p3])
-    #     parent_prog = chosen_parent.program
-    #     child.mutate(parent_prog, parent_agent=chosen_parent)
-
-    #     # 3) Cultural inheritance: language learning
-    #     #    - associations: blended & decayed
-    #     #    - symbol drift: blended & decayed
-    #     child.utterance_memory["associations"] = self._blend_assoc(p1, p2, p3, noise=0.03, decay=0.90)
-    #     # usage_count starts fresh (prevents ancient dominance)
-    #     child.utterance_memory["usage_count"].clear()
-
-    #     child.symbol_drift = self._blend_symbol_drift(p1, p2, p3, noise=0.03, decay=0.95)
-
-    #     # 4) Social memory starts clean (keeps dynamics healthy)
-    #     child.social_memory.clear()
-    #     child.lineage_score = 0.0
-
-    #     # scalar memory channels reset
-    #     child.memory["last_fitness"] = 0.0
-    #     child.memory["last_fitness_change"] = 0.0
-    #     child.memory["cooperation_success"] = 0.0
-    #     child.memory["novelty_success"] = 0.0
-
-    #     # Energy: newborn starts slightly below max
-    #     child.energy = ENERGY_MAX * 0.75
-
-    #     # 5) Numeric-symbol & counting system inheritance 🌱
-    #     parent_maps = [getattr(p, "symbol_map", {}) for p in (p1, p2, p3) if hasattr(p, "symbol_map")]
-    #     child.symbol_map = {}
-
-    #     # Ensure counting system sees the same mapping as the agent
-    #     if hasattr(child, "counting") and hasattr(child, "symbol_map"):
-    #         try:
-    #             child.counting.set_symbol_map(child.symbol_map)
-    #         except Exception:
-    #             pass
-
-    #     # Merge all parent mappings (last parent wins if conflict)
-    #     for m in parent_maps:
-    #         if not m:
-    #             continue
-    #         for k, v in m.items():
-    #             child.symbol_map[k] = v
-
-    #     # If none of the parents had a map, initialise a fresh one
-    #     if not child.symbol_map:
-    #         cs = CountingSystem()
-    #         child.symbol_map = {i: cs.get_symbol(i) for i in range(cs.base)}
-    #         child.counting = cs
-    #     else:
-    #         # If at least one parent had a system, merge their counting bases
-    #         parent_systems = [getattr(p, "counting", None) for p in (p1, p2, p3) if hasattr(p, "counting")]
-    #         if parent_systems:
-    #             cs = CountingSystem()
-    #             cs.merge_from(*[s for s in parent_systems if s])
-    #             child.counting = cs
-    #         else:
-    #             # fallback if maps exist but no counting obj
-    #             child.counting = CountingSystem()
-
-    #     # Ensure numeric symbol map initialized cleanly
-    #     if not hasattr(child, "symbol_map"):
-    #         child.symbol_map = {}
-
-    #     # Always initialise history
-    #     child.symbol_map_history = {}
-
-    #     return child
-
     def make_child(self, p1, p2, p3, new_id):
         """
         Tri-parent child creation with full semantic, linguistic, numeric,
@@ -1296,7 +1214,7 @@ class Coordinator:
             - identity token 'a{new_id}' correctly grounded
         """
 
-        child = Agent(new_id)
+        child = Agent(id = new_id, token_registry=self.token_registry)
 
         # ---------------------------------------------------
         # 1) TRAITS
@@ -1392,24 +1310,80 @@ class Coordinator:
         # First: normalise any weird existing rows in child's links
         for a, nbrs in list(lsem.items()):
             if not isinstance(nbrs, defaultdict):
-                lsem[a] = defaultdict(float, nbrs)
+                lsem[a] = defaultdict(lambda: 0.0, nbrs)
+
+        def _extract_weight(entry):
+            """Handle both float and dict-style link entries."""
+            if isinstance(entry, dict):
+                return float(entry.get("w", 0.0))
+            return float(entry)
+
+        def _merge_link_entry(existing, incoming_weight, incoming_entry=None):
+            """
+            Merge an existing link value with an incoming one.
+
+            existing: float or dict or None
+            incoming_weight: float (already extracted)
+            incoming_entry: dict or None (original incoming link)
+            """
+            base_w = 0.0
+            if existing is not None:
+                if isinstance(existing, dict):
+                    base_w = float(existing.get("w", 0.0))
+                else:
+                    base_w = float(existing)
+
+            new_w = base_w + incoming_weight * (1.0 / 3.0)
+
+            # If either side is dict-style, return a dict-style entry
+            if isinstance(existing, dict) or isinstance(incoming_entry, dict):
+                out = existing.copy() if isinstance(existing, dict) else {}
+                # merge usefulness if present
+                uses = []
+                if isinstance(existing, dict) and "use" in existing:
+                    uses.append(existing["use"])
+                if isinstance(incoming_entry, dict) and "use" in incoming_entry:
+                    uses.append(incoming_entry["use"])
+                if uses:
+                    out["use"] = sum(uses) / len(uses)
+
+                # age: child starts "young" – we can reset or lightly blend
+                if isinstance(existing, dict) and "age" in existing:
+                    out["age"] = max(0, int(existing["age"]))
+                else:
+                    out["age"] = 0
+
+                out["w"] = new_w
+                return out
+
+            # plain float mode
+            return new_w
 
         # Then: merge parent link graphs
         for plinks in parent_links:
             for a, nbrs in plinks.items():
-                # Ensure row is a defaultdict(float)
+                # Ensure row is a defaultdict
                 row = lsem.get(a)
                 if row is None or not isinstance(row, defaultdict):
-                    row = lsem[a] = defaultdict(float, row or {})
-                # Accumulate weights safely (no KeyError even if row is plain dict)
-                for b, w in nbrs.items():
-                    row[b] = row.get(b, 0.0) + (w * (1.0 / 3.0))
+                    row = lsem[a] = defaultdict(lambda: 0.0, row or {})
 
-        # prune tiny edges
+                for b, entry in nbrs.items():
+                    # extract numeric weight from parent entry
+                    incoming_w = _extract_weight(entry)
+                    existing = row.get(b)
+                    row[b] = _merge_link_entry(existing, incoming_w, entry)
+
+        # prune tiny edges (supports float + dict)
         for a, nbrs in list(lsem.items()):
-            for b, w in list(nbrs.items()):
+            for b, entry in list(nbrs.items()):
+                if isinstance(entry, dict):
+                    w = float(entry.get("w", 0.0))
+                else:
+                    w = float(entry)
+
                 if abs(w) < 1e-6:
                     del nbrs[b]
+
             if not nbrs:
                 del lsem[a]
 
@@ -1453,7 +1427,7 @@ class Coordinator:
             for k, v in m.items():
                 child.symbol_map[k] = v
 
-        cs = CountingSystem()
+        cs = CountingSystem(owner=child)
         cs.merge_from(p1.counting, p2.counting, p3.counting)
         child.counting = cs
         child.counting.set_symbol_map(child.symbol_map)
@@ -1659,38 +1633,16 @@ class Coordinator:
         #         if hasattr(a, "try_solve_tasks"):
         #             a.try_solve_tasks(self.active_tasks, self.generation_index)
 
-        # === POST-TASK EVALUATION HOOKS ===
+        # -------------------------------------------------------
+        # POST-TASK EVALUATION
+        # -------------------------------------------------------
+
         for task in self.active_tasks:
-            if task.get("task_type") == "pref_align":
-                # gather responses from agents
-                responses = task.get("responses", [])
+            self.score_task(task)
 
-                # we expect exactly 2 entries
-                if len(responses) == 2:
-                    r1, r2 = responses[0], responses[1]
-
-                    # ensure they picked something
-                    if "choice" in r1 and "choice" in r2:
-                        # check agreement
-                        if r1["choice"] == r2["choice"]:
-                            # agreed → fitness and trust reward
-                            a_id = int(r1["agent_id"][1:])
-                            b_id = int(r2["agent_id"][1:])
-
-                            a = self.agent_by_id(a_id)
-                            b = self.agent_by_id(b_id)
-
-                            if a and b:
-                                a.own_fitness += 0.2
-                                b.own_fitness += 0.2
-
-                                if hasattr(a, "adjust_trust"):
-                                    a.adjust_trust(b_id, +0.05, channel=2)
-                                    b.adjust_trust(a_id, +0.05, channel=2)
-
-        # keep short task list
-        if hasattr(self, "active_tasks"):
-            self.active_tasks = self.active_tasks[-3:]
+        # then archive / trim
+        self.completed_tasks.extend(self.active_tasks)
+        self.active_tasks = self.active_tasks[-3:]
 
         # motivated action
         for agent in self.agents:
@@ -1979,7 +1931,7 @@ class Coordinator:
                     a.detect_semantic_families()
                 a.prune_families()
 
-            if self.generation_index % 100 == 0:
+            if self.generation_index % 50 == 0:
                 a.debug_dump_semantics()
 
             # each generation
@@ -2008,7 +1960,18 @@ class Coordinator:
 
     # =======================================================
     # TASKS & CHALLENGE UPDATES
+    # ======================================================\
+
     # ======================================================
+    #  TASK SCORING HELPERS
+    # ======================================================
+
+    def _clamp(self, x, lo=-1.0, hi=1.0):
+        return max(lo, min(hi, x))
+
+
+    def _mean(self, xs):
+        return sum(xs) / len(xs) if xs else 0.0
 
     def _generate_task_id(self):
         tid = f"T{self.next_task_id:04d}"
@@ -2029,6 +1992,45 @@ class Coordinator:
         except Exception as e:
             print("TASK LOAD ERROR:", e)
             return []
+
+    # ------------------------------------------------------
+    #  TASK GENERATORS
+    # ------------------------------------------------------
+
+    def score_pref_align(self, task):
+        responses = task.get("responses", [])
+        if len(responses) != 2:
+            return
+
+        r1, r2 = responses
+        if "choice" not in r1 or "choice" not in r2:
+            return
+
+        if r1["choice"] != r2["choice"]:
+            return
+
+        a_id = int(r1["agent_id"][1:])
+        b_id = int(r2["agent_id"][1:])
+
+        a = self.agent_by_id(a_id)
+        b = self.agent_by_id(b_id)
+        if not a or not b:
+            return
+
+        # reward
+        a.own_fitness += 0.2
+        b.own_fitness += 0.2
+
+        if hasattr(a, "adjust_trust"):
+            a.adjust_trust(b_id, +0.05, channel=2)
+            b.adjust_trust(a_id, +0.05, channel=2)
+
+        # optional logging hook
+        task["evaluation"] = {
+            "agreed": True,
+            "agents": [a_id, b_id],
+            "choice": r1["choice"],
+        }
 
     def generate_describe_concept_task(self):
         if not self.agents:
@@ -2477,6 +2479,184 @@ class Coordinator:
             "assigned_agents": [a.id, b.id],
             "responses": []
         }
+
+    # ======================================================
+    #  TASK SCORERS
+    # ======================================================
+
+    def score_task(self, task):
+        ttype = task.get("task_type")
+        scorer = getattr(self, f"score_{ttype}", None)
+        if scorer:
+            try:
+                scorer(task)
+            except Exception as e:
+                print(f"[SCORER ERROR] {ttype}: {e}")
+
+    def score_compare_numbers(self, task):
+        gt = task.get("ground_truth", {})
+        correct = gt.get("answer_phrase")
+        if not correct:
+            return
+
+        for ag in self.agents:
+            resp = ag.solved_tasks.get(task["task_id"])
+            if not resp:
+                continue
+
+            if resp.get("answer") == correct:
+                ag.own_fitness += 0.25
+            else:
+                ag.own_fitness -= 0.05
+
+
+    def score_reconcile_counts(self, task):
+        responses = task.get("responses", [])
+        if len(responses) < 2:
+            return
+
+        values = [r.get("normalized") for r in responses if "normalized" in r]
+        if not values:
+            return
+
+        # agreement pressure
+        most_common = max(set(values), key=values.count)
+        agree_frac = values.count(most_common) / len(values)
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if not ag:
+                continue
+
+            if r.get("normalized") == most_common:
+                ag.own_fitness += 0.15 * agree_frac
+            else:
+                ag.own_fitness -= 0.03
+
+
+    def score_agreement_dialogue(self, task):
+        responses = task.get("responses", [])
+        if len(responses) < 2:
+            return
+
+        proposals = [tuple(r.get("proposal", "").split()) for r in responses]
+        if not proposals:
+            return
+
+        majority = max(set(proposals), key=proposals.count)
+        frac = proposals.count(majority) / len(proposals)
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if not ag:
+                continue
+
+            if tuple(r.get("proposal", "").split()) == majority:
+                ag.own_fitness += 0.12 * frac
+
+    def score_similarity_debate(self, task):
+        responses = task.get("responses", [])
+        if len(responses) < 2:
+            return
+
+        pairs = [tuple(r.get("chosen_pair", [])) for r in responses if r.get("chosen_pair")]
+        if not pairs:
+            return
+
+        majority = max(set(pairs), key=pairs.count)
+        frac = pairs.count(majority) / len(pairs)
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if not ag:
+                continue
+
+            if tuple(r.get("chosen_pair", [])) == majority:
+                ag.own_fitness += 0.10 * frac
+
+    def score_definition_swap(self, task):
+        responses = task.get("responses", [])
+        if len(responses) < 2:
+            return
+
+        token_sets = [
+            set(r.get("utterance", "").split())
+            for r in responses
+            if r.get("utterance")
+        ]
+
+        if len(token_sets) < 2:
+            return
+
+        overlap = set.intersection(*token_sets)
+        score = min(len(overlap) / 4.0, 1.0)
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if ag:
+                ag.own_fitness += 0.08 * score
+
+    def score_misunderstanding_detection(self, task):
+        responses = task.get("responses", [])
+        if not responses:
+            return
+
+        base_tokens = set(task.get("data", {}).get("utterance", "").split())
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if not ag:
+                continue
+
+            out_tokens = set(r.get("interpretation", "").split())
+            overlap = base_tokens & out_tokens
+
+            ag.own_fitness += 0.05 + 0.02 * len(overlap)
+    
+    def score_role_assignment(self, task):
+        responses = task.get("responses", [])
+        if len(responses) < 2:
+            return
+
+        doers = [r.get("doer") for r in responses if r.get("doer")]
+        receivers = [r.get("receiver") for r in responses if r.get("receiver")]
+
+        doer_consensus = len(set(doers)) == 1
+        recv_consensus = len(set(receivers)) == 1
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if not ag:
+                continue
+
+            if doer_consensus:
+                ag.own_fitness += 0.07
+            if recv_consensus:
+                ag.own_fitness += 0.07
+
+    def score_prediction_task(self, task):
+        responses = task.get("responses", [])
+        if len(responses) < 2:
+            return
+
+        preds = [r.get("prediction") for r in responses if r.get("prediction")]
+        if not preds:
+            return
+
+        majority = max(set(preds), key=preds.count)
+        frac = preds.count(majority) / len(preds)
+
+        for r in responses:
+            aid = int(r["agent_id"][1:])
+            ag = self.agent_by_id(aid)
+            if ag and r.get("prediction") == majority:
+                ag.own_fitness += 0.08 * frac
     
     def evaluate_cooperative_task(self, task, responses):
         # task was created with key "assigned_agents"

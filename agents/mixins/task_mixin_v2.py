@@ -444,7 +444,6 @@ class TaskMixinV2(TaskMixin):
         just_tokens = ["why"]
         just_tokens.extend(rel_chain)
         just_tokens.extend(neighbor_tokens)
-        just_tokens.extend(numeric_tokens)
         just_tokens.extend(tail_tokens)
 
         # filter & cap
