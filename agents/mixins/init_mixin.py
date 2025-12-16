@@ -4,6 +4,11 @@ import random
 from collections import defaultdict, deque
 from evolution.counting import CountingSystem
 from agents.language import LanguageOrgan
+from agents.cognition.numeric_system import NumericSystem
+from agents.cognition.epistemic_system import EpistemicSystem
+from agents.cognition.identity_system import IdentitySystem
+from agents.cognition.semantic_system import SemanticSystem
+from agents.cognition.pragmatic_system import PragmaticSystem
 from agents.agent_constants import SYLLABLES
 
 
@@ -58,6 +63,14 @@ class InitMixin:
 
         # numeric symbolic mapping
         self.numeric_bias = random.uniform(-1, 1)
+
+        # Cognitive systems
+        self.numeric_system = NumericSystem(owner=self)
+        self.epistemic_system = EpistemicSystem(owner=self)
+        self.identity_system = IdentitySystem(owner=self)
+        self.semantic_system = SemanticSystem(owner=self)
+        self.pragmatic_system = PragmaticSystem(owner=self)
+
         self.symbol_map = {}
         self.symbol_map_history = {}
         self.inverse_symbol_map = {}
