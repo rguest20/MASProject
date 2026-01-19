@@ -2,7 +2,7 @@
 
 import random
 import numpy as np
-from agents.semantics import rand_vec, add, sub, scale, cos_sim
+from agents.cognition.semantic_utils import rand_vec, add, sub, scale, cos_sim
 
 
 class SandboxMixin:

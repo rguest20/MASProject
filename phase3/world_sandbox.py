@@ -26,7 +26,6 @@ def build_sandbox(agent_list, spec: SandboxSpec):
     os.makedirs(os.path.join(world_path, "notes"), exist_ok=True)
 
     # Ensure notes files exist
-    # if not os.path.exists(os.path.join(world_path, "notes.txt")):
     world.write_text("/notes.txt", "Shared notes begin here:\n")
 
     # Dictionary (persist)
@@ -34,11 +33,8 @@ def build_sandbox(agent_list, spec: SandboxSpec):
     if not os.path.exists(dict_path):
         world.write_text("/dictionary.json", json.dumps({"hello": "greeting"}))
 
-    # --- NEW: Create help files once ---
-    # if not os.path.exists(os.path.join(world_path, "help_required.txt")):
     world.write_text("/help_required.txt", "")
 
-    # if not os.path.exists(os.path.join(world_path, "help_responses.txt")):
     world.write_text("/help_responses.txt", "")
 
     # --- COMM + LEDGER ---
@@ -59,9 +55,10 @@ def build_sandbox(agent_list, spec: SandboxSpec):
         home_fs.write_text("/log.txt", f"agent {a.id} home\n")
         home_fs.write_text("/scratch.txt", "")
         home_fs.write_text("/hints.txt",
-            "Try reading /world/notes/welcome.txt\n"
-            "Try reading /world/dictionary.json\n"
-            "Try writing to /world/notes.txt\n"
+            "Try reading /notes.txt (world)\n"
+            "Try reading /dictionary.json (world)\n"
+            "Try writing to /notes.txt (world)\n"
+            "Try writing to /scratch.txt (home)\n"
             "Try drawing pixels on the world canvas\n"
         )
 

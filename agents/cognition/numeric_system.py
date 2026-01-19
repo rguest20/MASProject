@@ -11,7 +11,7 @@ class NumericSystem:
     """
     def __init__(self, owner):
         self.owner = owner
-        self.base = None
+        self.base = random.choice(POSSIBLE_BASES)
         self.symbols = {}
         self.inverse = {}
         self._init_seed_symbols()
@@ -20,29 +20,22 @@ class NumericSystem:
         
         # Numeric semantic anchors
         self.numeric_semantic = {}
-
-        initial_base = random.choice(POSSIBLE_BASES)
-        dim = self.owner.semantic_system._semantic_dim()
-
-        for d in range(initial_base):
+        for d in range(self.base):
             tok = self.get_symbol(d)
-            if tok not in self.owner.semantic_system.vectors:
-                anchor = [(d / (initial_base - 1)) * 0.2] + [0.0] * (dim - 1)
-                anchor = [x + random.uniform(-0.02, 0.02) for x in anchor]
-                self.owner.semantic_system.vectors[tok] = anchor
-                self.numeric_semantic[d] = tok
-                self.owner.vocab.add(tok)
-                self.owner.semantic_system.vectors[tok] = list(anchor)
+            self.numeric_semantic[d] = tok
             self.owner.vocab.add(tok)
+            if hasattr(self.owner, "semantic_system"):
+                self.owner.semantic_system.ensure_numeric_token(tok, digit=d, base=self.base)
 
     def _numeric_collision_score(self):
         mapping = self.numeric_semantic
         tokens = list(mapping.values())
         unique = set(tokens)
         return max(0, len(tokens) - len(unique))
-    
 
     def _register_numeric_token(self, tok):
+        if not tok:
+            return
         if self.owner and hasattr(self.owner, "register_numeric_token"):
             self.owner.register_numeric_token(tok)
 
@@ -204,12 +197,16 @@ class NumericSystem:
         """
         if random.random() < 0.1:
             self.base = random.choice(POSSIBLE_BASES)
-        # if random.random() < 0.3 and self.symbols:
-        #     k = random.choice(list(self.symbols.keys()))
-        #     old = self.symbols[k]
-        #     new = old + random.choice("aeiou")
-        #     self.symbols[k] = new
-        #     self.inverse[new] = k
+        if random.random() < 0.3 and self.symbols:
+            k = random.choice(list(self.symbols.keys()))
+            old = self.symbols[k]
+            new = f"{old}{random.choice('aeiou')}"
+            self.symbols[k] = new
+            self.inverse[new] = k
+
+    def mutate_base(self):
+        """Compatibility shim: older code calls `counting.mutate_base()`."""
+        self.base = random.choice(POSSIBLE_BASES)
 
     def get_symbol(self, n: int) -> str:
         """
@@ -283,6 +280,8 @@ class NumericSystem:
         if their_score < my_score:
             for n, tok in teacher.numeric_system.numeric_semantic.items():
                 self.numeric_semantic[n] = tok
+                if hasattr(self.owner, "semantic_system"):
+                    self.owner.semantic_system.ensure_numeric_token(tok, digit=n, base=self.base)
             if hasattr(self.owner, "trust_channels"):
                 self.owner.trust_channels[teacher.id] = \
                     min(1.0, self.owner.trust_channels.get(teacher.id, 0.0) + 0.05)
@@ -330,6 +329,8 @@ class NumericSystem:
             self.owner.semantic_system._ensure_vec(tok)
             self.owner._ensure_token_semantic(tok)
             self.owner._semantic_tick_token(tok)
+            if hasattr(self.owner, "semantic_system"):
+                self.owner.semantic_system.ensure_numeric_token(tok, digit=d, base=self.base)
             tokens.append(tok)
 
         if not tokens:
@@ -341,4 +342,6 @@ class NumericSystem:
         utter = " ".join(tokens)
         self.last_written_word = utter
         self._last_tokens = clean
+        self.owner.last_written_word = utter
+        self.owner._last_tokens = clean
         return utter

@@ -7,7 +7,7 @@ import numpy as np
 
 from agents.agent import Agent
 from evolution.challenge import ChallengeSystem
-from evolution.counting import CountingSystem
+from agents.cognition.numeric_system import NumericSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
 from evolution.programs import run_program, safe, mutate_program
 from evolution.mixins.global_registry import GlobalTokenRegistry
@@ -96,11 +96,18 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.bus = bus
         self.ledger = ledger
 
-        # Attach API & energy to all agents
+        # Attach API, energy, and apply initial semantic seeds to all agents
         for a in self.agents:
             if a.id in self.agent_apis:
                 a.attach_api(self.agent_apis[a.id])
             a.energy = ENERGY_MAX
+
+            # Apply global semantic seeds once at initialisation
+            try:
+                if hasattr(a, "semantic_system") and self.semantic_seeds:
+                    a.semantic_system.receive_semantic_seeds(self.semantic_seeds)
+            except Exception:
+                pass
 
         # identity grounding for all agents
         for a in self.agents:
@@ -768,8 +775,9 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             for k, v in m.items():
                 child.symbol_map[k] = v
 
-        cs = CountingSystem(owner=child)
+        cs = NumericSystem(owner=child)
         cs.merge_from(p1.counting, p2.counting, p3.counting)
+        child.numeric_system = cs
         child.counting = cs
         child.counting.set_symbol_map(child.symbol_map)
 
@@ -895,15 +903,16 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # Agents attempt tasks
         for ag in self.agents:
-            ag.try_solve_tasks(self.active_tasks, self.generation_index)
+            if hasattr(ag, "task_system_v2"):
+                ag.task_system_v2.try_solve_tasks(self.active_tasks, self.generation_index)
 
         # -------------------------------------------------------
-        # TASK SOLVING
+        # TASK SOLVING (legacy fallback)
         # -------------------------------------------------------
         # if hasattr(self, "active_tasks") and self.active_tasks:
         #     for a in self.agents:
-        #         if hasattr(a, "try_solve_tasks"):
-        #             a.try_solve_tasks(self.active_tasks, self.generation_index)
+        #         if hasattr(a, "task_system_v2"):
+        #             a.task_system_v2.try_solve_tasks(self.active_tasks, self.generation_index)
 
         # -------------------------------------------------------
         # POST-TASK EVALUATION
@@ -918,7 +927,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # motivated action
         for agent in self.agents:
-            action = agent.decide_action()
+            action = agent.decision_system.decide_action()
             success = orchestrate_action(agent, action, self)
             agent.last_action = action
             agent.last_action_success = success

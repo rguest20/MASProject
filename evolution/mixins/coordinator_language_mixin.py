@@ -1,7 +1,7 @@
 import math
 import random
 
-from agents.semantics import add, scale, cos_sim
+from agents.cognition.semantic_utils import add, scale, cos_sim
 from evolution.coordinator_settings import (
     REFERENTIAL_BONUS,
     PHASE2_LR,
@@ -33,7 +33,7 @@ class CoordinatorLanguageMixin:
         if random.random() < 0.3:
             if teacher.semantic["vecs"]:
                 word = random.choice(list(teacher.semantic["vecs"].keys()))
-                teacher.teach_student(student, word)
+                teacher.teaching_system.teach_student(student, word)
 
         for sender in agents:
             rep_list = sender.export_reputation(top_k=5) or []
@@ -80,7 +80,7 @@ class CoordinatorLanguageMixin:
         for _ in range(pairs):
             teacher, student = random.sample(self.agents, 2)
 
-            if teacher.teaching_willingness(student.id) < 0.1 and random.random() < 0.85:
+            if teacher.teaching_system.teaching_willingness(student.id) < 0.1 and random.random() < 0.85:
                 continue
 
             bundle = teacher.export_semantic_bundle(max_keys=3)
@@ -274,7 +274,7 @@ class CoordinatorLanguageMixin:
 
             weights = []
             for c in candidates:
-                will = max(0.0, teacher.teaching_willingness(c.id))
+                will = max(0.0, teacher.teaching_system.teaching_willingness(c.id))
                 weights.append(0.05 + will)
 
             student = random.choices(candidates, weights=weights)[0]
@@ -282,7 +282,7 @@ class CoordinatorLanguageMixin:
             student.teaching_attempted = True
             teacher.teaching_attempted = True
 
-            if teacher.teaching_willingness(student.id) < teacher.traits.get("trust_threshold", 0.3):
+            if teacher.teaching_system.teaching_willingness(student.id) < teacher.traits.get("trust_threshold", 0.3):
                 continue
 
             new_prog = self.crossover_program(student.program, teacher.program)
@@ -309,11 +309,11 @@ class CoordinatorLanguageMixin:
             word = bundle["tokens"][0]
             expected_vec = bundle["vecs"][word]
 
-            teach_reward, teach_penalty, sim = teacher.teach_student(
+            teach_reward, teach_penalty, sim = teacher.teaching_system.teach_student(
                 student, word, current_gen=self.generation_index
             )
 
-            eval_reward = student.evaluate_teaching(
+            eval_reward = student.teaching_system.evaluate_teaching(
                 teacher.id, word, expected_vec
             )
 
@@ -323,7 +323,7 @@ class CoordinatorLanguageMixin:
                 self.world.append_text(
                     "/notes.txt",
                     f"[TeachPhase] A{teacher.id}->{student.id} "
-                    f"trust={teacher.teaching_willingness(student.id):.2f} "
+                    f"trust={teacher.teaching_system.teaching_willingness(student.id):.2f} "
                     f"word={word} sim={sim:.2f} "
                     f"teachR={teach_reward:.2f} evalR={eval_reward:.2f}\n"
                 )
