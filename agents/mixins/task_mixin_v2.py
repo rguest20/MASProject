@@ -410,14 +410,13 @@ class TaskMixinV2(TaskMixin):
 
         # 3) semantic neighbors of the reasoning chain
         neighbor_tokens = []
-        if hasattr(self, "_semantic_neighbors"):
-            for t in rel_chain:
-                try:
-                    nbrs = self._semantic_neighbors(t, k=3)
-                except Exception:
-                    nbrs = []
-                if nbrs:
-                    neighbor_tokens.append(random.choice(nbrs))
+        for t in rel_chain:
+            try:
+                nbrs = self.semantic_system._semantic_neighbors(t, k=3)
+            except Exception:
+                nbrs = []
+            if nbrs:
+                neighbor_tokens.append(random.choice(nbrs))
 
         # 4) numeric evidence from last numeric phrase (if any)
         numeric_tokens = []
@@ -673,13 +672,12 @@ class TaskMixinV2(TaskMixin):
 
         # semantic neighbors add flavour
         nbrs = []
-        if hasattr(self, "_semantic_neighbors") and anchor:
-            try:
-                nb = self._semantic_neighbors(anchor, k=2)
-                if nb:
-                    nbrs.append(random.choice(nb))
-            except Exception:
-                pass
+        try:
+            nb = self.semantic_system._semantic_neighbors(anchor, k=2)
+            if nb:
+                nbrs.append(random.choice(nb))
+        except Exception:
+            pass
 
         # free-language tail
         tail = []
@@ -882,14 +880,13 @@ class TaskMixinV2(TaskMixin):
         if anchor:
             expanded.append(anchor)
 
-        if hasattr(self, "_semantic_neighbors"):
-            for t in toks:
-                try:
-                    nbs = self._semantic_neighbors(t, k=1)
-                    if nbs:
-                        expanded.append(nbs[0])
-                except Exception:
-                    pass
+        for t in toks:
+            try:
+                nbs = self.semantic_system._semantic_neighbors(t, k=1)
+                if nbs:
+                    expanded.append(nbs[0])
+            except Exception:
+                pass
 
         if hasattr(self, "produce_utterance") and random.random() < 0.7:
             try:
@@ -1038,12 +1035,7 @@ class TaskMixinV2(TaskMixin):
                 anchor = None
 
         # semantic neighbours of target
-        neighbours = []
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                neighbours = self._semantic_neighbors(target, k=3)
-            except Exception:
-                neighbours = []
+        neighbours = self.semantic_system._semantic_neighbors(target, k=3)
 
         # optional free tail
         tail = []
@@ -1104,22 +1096,10 @@ class TaskMixinV2(TaskMixin):
         candidates = []
 
         # neighbours of A
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                n_a = self._semantic_neighbors(a_tok, k=4)
-            except Exception:
-                n_a = []
-        else:
-            n_a = []
+        n_a = self.semantic_system._semantic_neighbors(a_tok, k=4)
 
         # neighbours of B
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                n_b = self._semantic_neighbors(b_tok, k=4)
-            except Exception:
-                n_b = []
-        else:
-            n_b = []
+        n_b = self.semantic_system._semantic_neighbors(b_tok, k=4)
 
         # intersection first (tokens that “live” near both)
         inter = list(set(n_a) & set(n_b))
@@ -1273,18 +1253,17 @@ class TaskMixinV2(TaskMixin):
 
         for _ in range(3):
             nxt = None
-            if hasattr(self, "_semantic_neighbors"):
-                try:
-                    nbs = self._semantic_neighbors(cur, k=3)
-                except Exception:
-                    nbs = []
-                if nbs:
-                    nxt = random.choice(nbs)
+            nbs = self.semantic_system._semantic_neighbors(cur, k=3)
+            
+            if nbs:
+                nxt = random.choice(nbs)
+            
             if not nxt and hasattr(self, "produce_utterance"):
                 try:
                     nxt = (self.produce_utterance() or "").split()[0]
                 except Exception:
                     nxt = None
+            
             if not nxt:
                 nxt = "su"
             chain.append(nxt)
@@ -1343,12 +1322,7 @@ class TaskMixinV2(TaskMixin):
             doer = random.choice(ids)
 
         # neighbours for receiver
-        neigh = []
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                neigh = self._semantic_neighbors(event, k=4)
-            except Exception:
-                neigh = []
+        neigh = self.semantic_system._semantic_neighbors(event, k=4)
 
         for t in neigh:
             if isinstance(t, str) and t != event:
@@ -1442,13 +1416,10 @@ class TaskMixinV2(TaskMixin):
 
         # add one neighbour to represent "different" reading
         alt = []
-        if toks_in and hasattr(self, "_semantic_neighbors") and random.random() < 0.6:
-            try:
-                nbs = self._semantic_neighbors(toks_in[0], k=2)
-                if nbs:
-                    alt.append(nbs[0])
-            except Exception:
-                pass
+        if toks_in and random.random() < 0.6:
+            nbs = self.semantic_system._semantic_neighbors(toks_in[0], k=2)
+            if nbs:
+                alt.append(nbs[0])
 
         out = ["why"]
         if anchor:
@@ -1506,12 +1477,7 @@ class TaskMixinV2(TaskMixin):
         if hasattr(self, "_ensure_vec"):
             self._ensure_vec(target)
 
-        neighbours = []
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                neighbours = self._semantic_neighbors(target, k=5)
-            except Exception:
-                neighbours = []
+        neighbours = self.semantic_system._semantic_neighbors(target, k=5)
 
         props = []
         for t in neighbours:
@@ -1588,11 +1554,7 @@ class TaskMixinV2(TaskMixin):
 
         # candidate nouns from neighbours + recent tokens
         cands = []
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                cands.extend(self._semantic_neighbors(verb, k=6))
-            except Exception:
-                pass
+        cands.extend(self.semantic_system._semantic_neighbors(verb, k=6))
 
         recent = getattr(self, "recent_tokens", [])[-15:]
         for t in recent:
@@ -1674,12 +1636,7 @@ class TaskMixinV2(TaskMixin):
         reused = reused[:3]
 
         # add one or two neighbours of token as "extra nuance"
-        nuance = []
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                nuance = self._semantic_neighbors(token, k=2)
-            except Exception:
-                nuance = []
+        nuance = self.semantic_system._semantic_neighbors(token, k=2)
 
         anchor = None
         if hasattr(self, "_ensure_concept_token"):
@@ -1746,14 +1703,10 @@ class TaskMixinV2(TaskMixin):
 
         # choose candidate via neighbours
         candidate = None
-        if hasattr(self, "_semantic_neighbors"):
-            try:
-                nbs = self._semantic_neighbors(last, k=3)
-            except Exception:
-                nbs = []
-            if nbs:
-                candidate = random.choice(nbs)
-
+        nbs = self.semantic_system._semantic_neighbors(last, k=3)
+        if nbs:
+            candidate = random.choice(nbs)
+        # fallback: use language organ
         if candidate is None and hasattr(self, "produce_utterance"):
             try:
                 candidate = (self.produce_utterance() or "").split()[0]

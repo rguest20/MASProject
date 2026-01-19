@@ -67,10 +67,7 @@ class ReasoningMixin:
         else:
             dim = 32
 
-        if hasattr(self, "_randvec"):
-            vecs[tok] = self._randvec()
-        else:
-            vecs[tok] = [random.uniform(-0.5, 0.5) for _ in range(dim)]
+        vecs[tok] = self.semantic_system._randvec()
 
     def _r_get_vec(self, tok):
         return self.semantic["vecs"].get(tok)

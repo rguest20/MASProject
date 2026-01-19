@@ -486,7 +486,7 @@ class SemanticMixin:
         # ------------------------------
         # 2. Novelty: difference from neighbour mean
         # ------------------------------
-        neigh = self._semantic_neighbors(a, k=2)
+        neigh = self.semantic_system._semantic_neighbors(a, k=2)
 
         # --- Filter out neighbours missing vectors ---
         valid_neigh = [n for n in neigh if n in vecs]

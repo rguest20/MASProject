@@ -65,10 +65,10 @@ class InitMixin:
         self.numeric_bias = random.uniform(-1, 1)
 
         # Cognitive systems
-        self.numeric_system = NumericSystem(owner=self)
+        self.semantic_system = SemanticSystem(owner=self)
         self.epistemic_system = EpistemicSystem(owner=self)
         self.identity_system = IdentitySystem(owner=self)
-        self.semantic_system = SemanticSystem(owner=self)
+        self.numeric_system = NumericSystem(owner=self)
         self.pragmatic_system = PragmaticSystem(owner=self)
 
         self.symbol_map = {}

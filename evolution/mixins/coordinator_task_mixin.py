@@ -402,8 +402,8 @@ class CoordinatorTaskMixin:
         A_val = random.randint(0, max_n)
         B_val = random.randint(0, max_n)
 
-        A_tokens = ref.speak_number(A_val).split()
-        B_tokens = ref.speak_number(B_val).split()
+        A_tokens = ref.numeric_system.speak_number(A_val).split()
+        B_tokens = ref.numeric_system.speak_number(B_val).split()
 
         A_str = " ".join(A_tokens)
         B_str = " ".join(B_tokens)
@@ -543,9 +543,9 @@ class CoordinatorTaskMixin:
 
         def encode(agent, value):
             try:
-                toks = agent.speak_number(value).split()
+                toks = agent.numeric_system.speak_number(value).split()
             except Exception:
-                toks = ref.speak_number(value).split()
+                toks = ref.numeric_system.speak_number(value).split()
             return " ".join(toks)
 
         A_view = encode(a, val)

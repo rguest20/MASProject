@@ -175,7 +175,7 @@ class CoordinatorLanguageMixin:
 
                 speaker = next((x for x in self.agents if x.id == speaker_id), None)
                 if speaker is not None:
-                    listener._maybe_learn_numeric_from(speaker)
+                    listener.numeric_system._maybe_learn_numeric_from(speaker)
 
                 listener.learn_from_feedback(utt, reward=r, lr=PHASE2_LR)
 

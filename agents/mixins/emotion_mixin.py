@@ -155,7 +155,7 @@ class EmotionMixin:
             S[k] = self._clamp01(S[k])
 
         # === NUMERIC COLLISION DISCOMFORT (explorer-driven) ===
-        collisions = self._numeric_collision_score()
+        collisions = self.numeric_system._numeric_collision_score()
         if collisions > 0:
             # scaled by curiosity
             self.intrinsic_discomfort = \

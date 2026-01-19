@@ -856,7 +856,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             agent.challenge_guess = self.challenge.expectation_to_guess(
                 agent.get_overall_expectation()
             )
-            agent.last_utterance = agent.speak_number(agent.challenge_guess)
+            agent.last_utterance = agent.numeric_system.speak_number(agent.challenge_guess)
 
         self.ledger.reset_gen()
 
@@ -1023,8 +1023,8 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # === NUMERIC DISTINCTION REWARD ===
         for agent in self.agents:
-            mapping = agent.numeric_semantic
-            collisions = agent._numeric_collision_score()
+            mapping = agent.numeric_system.numeric_semantic
+            collisions = agent.numeric_system._numeric_collision_score()
 
             # reward clarity
             if collisions == 0:
@@ -1046,7 +1046,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             # --- rel-family drift ---
             rel_fam = a.semantic.get("rel_family", {})
             if rel_fam:
-                rel_centroid = a._centroid([i["vec"] for i in rel_fam.values()])
+                rel_centroid = a.semantic_system._centroid([i["vec"] for i in rel_fam.values()])
                 if rel_centroid is not None:
                     for tok, info in rel_fam.items():
                         info["age"] += 1
@@ -1059,7 +1059,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             # --- NEW: ref-family drift ---
             ref_fam = a.semantic.get("ref_family", {})
             if ref_fam:
-                ref_centroid = a._centroid([i["vec"] for i in ref_fam.values()])
+                ref_centroid = a.semantic_system._centroid([i["vec"] for i in ref_fam.values()])
                 if ref_centroid is not None:
                     # slightly weaker pull than rel, to keep “about” tokens a bit looser
                     for tok, info in ref_fam.items():
@@ -1208,7 +1208,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
             # each generation
             a.semantic_drift_update()
-            a._sanitize_vector_dims()
+            a.semantic_system._sanitize_vector_dims()
             if hasattr(a, "family_reinforcement_update"):
                 a.family_reinforcement_update()
             a.family_soft_decay()
@@ -1218,10 +1218,8 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.print_community_semantic_stats()
 
         for a in self.agents:
-            if hasattr(a, "detect_semantic_gaps"):
-                a.detect_semantic_gaps(self.community_semantic)
-            if hasattr(a, "apply_flavour_homeostasis"):
-                a.apply_flavour_homeostasis(self.community_semantic)
+            a.epistemic_system.detect_semantic_gaps(self.community_semantic)
+            a.epistemic_system.apply_flavour_homeostasis(self.community_semantic)
 
         self.print_semantic_gap_stats()
         self.semantic_alignment_tasks = []
