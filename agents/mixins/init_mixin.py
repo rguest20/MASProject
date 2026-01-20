@@ -180,6 +180,9 @@ class InitMixin:
             "esteem": 0.5,
             "play": 0.6
         }
+        # Back-compat: some systems refer to `agent.motivations` (older name).
+        if not hasattr(self, "motivations") or not isinstance(getattr(self, "motivations", None), dict):
+            self.motivations = dict(self.needs)
 
         # action list
         self.available_actions = [

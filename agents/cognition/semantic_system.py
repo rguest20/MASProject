@@ -1,16 +1,27 @@
 """Semantic system for managing agent semantic memory and associations."""
 
+from __future__ import annotations
+
 import random
 import math
+import re
 import numpy as np
 from config import DIMS
 from agents.cognition.semantic_utils import add, sub, scale
+from typing import Optional
 class SemanticSystem:
     """
     Manages the semantic memory and associations of an agent.
     """
     def __init__(self, owner):
         self.owner = owner
+
+        # Shared semantic container (some mixins/systems expect this to exist).
+        if not hasattr(self.owner, "semantic") or not isinstance(getattr(self.owner, "semantic", None), dict):
+            self.owner.semantic = {}
+        self.owner.semantic.setdefault("concept_tokens", {})
+        self.concept_tokens = self.owner.semantic["concept_tokens"]
+
         self.family_system = self.SemanticFamily(owner)
         # Back-compat: older code expects direct access
         self.families = self.family_system.families
@@ -64,6 +75,7 @@ class SemanticSystem:
             sem = owner.semantic
 
         sem.setdefault("concept_tokens", {})
+        self.concept_tokens = sem["concept_tokens"]
         sem.setdefault("rel_family", {})
         sem.setdefault("ref_family", {})
 
@@ -71,7 +83,7 @@ class SemanticSystem:
             # token -> anchor vector (used for filtering + numeric reasoning)
             owner.numeric_semantic = {}
 
-    def ensure_numeric_token(self, tok: str, *, digit: int | None = None, base: int | None = None):
+    def ensure_numeric_token(self, tok: str, *, digit: Optional[int] = None, base: Optional[int] = None):
         """Register a numeric token so semantic learning can treat it specially.
 
         - Ensures a stable numeric anchor vector exists (owner.numeric_semantic[tok])
@@ -809,11 +821,23 @@ class SemanticSystem:
         def __init__(self, owner):
             self.owner = owner
             self.families = {}
-            self.family_counter=0
+            self.family_counter = 0
+
+            sem = getattr(owner, "semantic", None)
+            if isinstance(sem, dict):
+                fams = sem.get("families")
+                if isinstance(fams, dict):
+                    self.families = fams
+                fc = sem.get("family_counter")
+                if isinstance(fc, int):
+                    self.family_counter = fc
 
         def _create_family(self, centroid=None, parent_ids=None, ftype="emergent"):
             fid = f"F{self.family_counter}"
             self.family_counter += 1
+            sem = getattr(self.owner, "semantic", None)
+            if isinstance(sem, dict):
+                sem["family_counter"] = int(self.family_counter)
 
             self.families[fid] = {
                 "centroid": list(centroid) if centroid is not None else None,
@@ -996,10 +1020,13 @@ class SemanticSystem:
             return out
 
         def maybe_broadcast_families(self):
-            if not hasattr(self, "api") or self.api is None:
+            o = self.owner
+            api = getattr(o, "api", None)
+            if api is None:
                 return
-            sem = self.semantic
-            fams = sem["families"]
+
+            sem = getattr(o, "semantic", None) or {}
+            fams = sem.get("families") or self.families
             if not fams:
                 return
             ordered = sorted(
@@ -1014,17 +1041,20 @@ class SemanticSystem:
                 if random.random() > p:
                     continue
                 if fam.get("name") is None:
-                    fam["name"] = self._invent_token(prefix="f", concept=True)
+                    if hasattr(o, "_invent_token"):
+                        fam["name"] = o._invent_token(prefix="f", concept=True)
+                    else:
+                        fam["name"] = f"f{fid.lower()}"
                 c = fam.get("centroid")
                 if not c:
                     continue
                 c_str = ",".join(f"{x:.3f}" for x in c)
                 line = (
-                    f"A{self.id} teach_family name={fam['name']} "
+                    f"A{o.id} teach_family name={fam['name']} "
                     f"conf={conf:.3f} centroid={c_str}\n"
                 )
                 try:
-                    self.api.append_text("/family_gossip.txt", line, scope="world")
+                    api.append_text("/family_gossip.txt", line, scope="world")
                 except Exception:
                     pass
 

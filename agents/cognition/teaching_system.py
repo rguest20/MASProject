@@ -23,6 +23,35 @@ class TeachingSystem:
         o.teach_cooldown = 3
         o._last_teaching_sim = 0.0
         o._last_teaching_reward = 0.0
+        o._last_learning_reward = 0.0
+
+    def apply_teaching_reward(self, student_id, reward):
+        o = self.owner
+        try:
+            reward = float(reward)
+        except Exception:
+            reward = 0.0
+
+        o._last_teaching_reward = reward
+        if hasattr(o, "energy"):
+            o.energy = max(0.0, min(100.0, float(o.energy) + 0.05 * reward))
+
+        if hasattr(o, "state_event"):
+            o.state_event("teaching_success" if reward > 0 else "teaching_failure")
+
+    def apply_learning_reward(self, teacher_id, reward):
+        o = self.owner
+        try:
+            reward = float(reward)
+        except Exception:
+            reward = 0.0
+
+        o._last_learning_reward = reward
+        if hasattr(o, "energy"):
+            o.energy = max(0.0, min(100.0, float(o.energy) + 0.05 * reward))
+
+        if hasattr(o, "state_event"):
+            o.state_event("learning_success" if reward > 0 else "learning_failure")
 
     def teaching_willingness(self, partner_id):
         o = self.owner

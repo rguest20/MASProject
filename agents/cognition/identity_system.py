@@ -13,6 +13,8 @@ class IdentitySystem:
     def __init__(self, owner):
         self.owner = owner
         self.identity_tokens = set()
+        # Back-compat: older code expects `agent.identity_tokens` to exist.
+        self.owner.identity_tokens = self.identity_tokens
 
         # primary self-identity token (stable across lifetime)
         self.identity_token = f"agent_{owner.id}"

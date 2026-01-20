@@ -60,7 +60,6 @@ def PERF(msg):
 
 class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
     def __init__(self):
-        self.active_tasks = self.load_tasks()
         self.semantic_alignment_tasks = []
         self.token_registry = GlobalTokenRegistry()
 
@@ -113,7 +112,10 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         for a in self.agents:
             tok = f"A{a.id}"
             a.vocab.add(tok)               # ensure language sees it
-            a.mark_identity_token(tok)     # push semantic meaning into identity subspace
+            if hasattr(a, "identity_system"):
+                a.identity_system.mark_identity_token(tok)
+            else:
+                a.mark_identity_token(tok)     # fallback bridge
 
         # Homeostatic control state
         self.archetype_stats = {
@@ -754,8 +756,21 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             except Exception:
                 pass
 
-        child.semantic["families"] = merged_families
+        child.semantic.setdefault("families", {})
+        if isinstance(child.semantic["families"], dict):
+            child.semantic["families"].clear()
+            child.semantic["families"].update(merged_families)
+        else:
+            child.semantic["families"] = dict(merged_families)
+
         child.semantic["family_counter"] = (max(fam_ids) + 1) if fam_ids else 1
+        if hasattr(child, "semantic_system") and hasattr(child.semantic_system, "family_system"):
+            child.semantic_system.family_system.families = child.semantic["families"]
+            child.semantic_system.families = child.semantic["families"]
+            try:
+                child.semantic_system.family_system.family_counter = int(child.semantic["family_counter"])
+            except Exception:
+                pass
 
         # ---------------------------------------------------
         # 5) LINGUISTIC MEMORY / ASSOCIATIONS
@@ -805,8 +820,11 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         # 10) IDENTITY — FINAL STEP
         # ---------------------------------------------------
         child.name_token = f"a{new_id}"
-        child.identity_tokens.add(child.name_token)
-        child.mark_identity_token(child.name_token)
+        if hasattr(child, "identity_system"):
+            child.identity_system.mark_identity_token(child.name_token)
+        else:
+            child.identity_tokens.add(child.name_token)
+            child.mark_identity_token(child.name_token)
 
         return child
 
@@ -870,20 +888,6 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # language phase
         self.run_language_phase()
-
-        # -------------------------------------------------------
-        # HELP ANSWERING (ONCE EARLY IN GEN)
-        # -------------------------------------------------------
-        for a in self.agents:
-            if hasattr(a, "maybe_answer_numeric_help"):
-                a.maybe_answer_numeric_help()
-
-        # -------------------------------------------------------
-        # TEACHING INGESTION
-        # -------------------------------------------------------
-        for a in self.agents:
-            if hasattr(a, "process_numeric_teaching"):
-                a.process_numeric_teaching()
 
         # -------------------------------------------------------
         # ARCHETYPE CLASSIFICATION (needed for homeostasis)
@@ -1208,9 +1212,13 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         for a in self.agents:
             # every 5 generations
             if self.generation_index % 5 == 0:
-                if hasattr(a, "detect_semantic_families"):
-                    a.detect_semantic_families()
-                a.prune_families()
+                if hasattr(a, "semantic_system") and hasattr(a.semantic_system, "family_system"):
+                    a.semantic_system.family_system.detect_semantic_families()
+                    a.semantic_system.family_system.prune_families()
+                else:
+                    if hasattr(a, "detect_semantic_families"):
+                        a.detect_semantic_families()
+                    a.prune_families()
 
             if self.generation_index % 50 == 0:
                 a.debug_dump_semantics()
@@ -1218,9 +1226,13 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             # each generation
             a.semantic_drift_update()
             a.semantic_system._sanitize_vector_dims()
-            if hasattr(a, "family_reinforcement_update"):
-                a.family_reinforcement_update()
-            a.family_soft_decay()
+            if hasattr(a, "semantic_system") and hasattr(a.semantic_system, "family_system"):
+                a.semantic_system.family_system.family_reinforcement_update()
+                a.semantic_system.family_system.family_soft_decay()
+            else:
+                if hasattr(a, "family_reinforcement_update"):
+                    a.family_reinforcement_update()
+                a.family_soft_decay()
             # --- Update community semantic centroid ---
 
         # --- Community Semantics ---

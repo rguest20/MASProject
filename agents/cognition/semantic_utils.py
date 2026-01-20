@@ -22,7 +22,7 @@ has had i you he she we they them us our your their its which who whom whose
 """.split()
 )
 
-_WORD_RE = re.compile(r"[A-Za-z][A-Za-z\\-']+")
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]+")
 
 
 def rand_vec(dim: int = DIM, span: float = 0.1):

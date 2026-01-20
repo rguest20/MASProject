@@ -3,6 +3,7 @@ agents/cognition/numeric_system.py
 Numeric system for managing agent numeric representations.
 """
 import random
+from typing import Optional
 
 POSSIBLE_BASES = [4, 6, 8, 10, 12, 16]
 class NumericSystem:
@@ -18,14 +19,12 @@ class NumericSystem:
         self.symbol_map = {}
         self.inverse_symbol_map = {}
         
-        # Numeric semantic anchors
-        self.numeric_semantic = {}
+        # Numeric semantic mapping: digit -> token (keep in sync with symbols).
+        self.numeric_semantic = self.symbols
         for d in range(self.base):
             tok = self.get_symbol(d)
             self.numeric_semantic[d] = tok
-            self.owner.vocab.add(tok)
-            if hasattr(self.owner, "semantic_system"):
-                self.owner.semantic_system.ensure_numeric_token(tok, digit=d, base=self.base)
+            self._register_numeric_token(tok, digit=d)
 
     def _numeric_collision_score(self):
         mapping = self.numeric_semantic
@@ -33,11 +32,27 @@ class NumericSystem:
         unique = set(tokens)
         return max(0, len(tokens) - len(unique))
 
-    def _register_numeric_token(self, tok):
-        if not tok:
+    def _register_numeric_token(self, tok: str, digit: Optional[int] = None):
+        if not isinstance(tok, str) or not tok.strip():
             return
-        if self.owner and hasattr(self.owner, "register_numeric_token"):
-            self.owner.register_numeric_token(tok)
+        tok = tok.strip().lower()
+
+        o = self.owner
+        if hasattr(o, "vocab") and isinstance(getattr(o, "vocab", None), set):
+            o.vocab.add(tok)
+
+        reg = getattr(o, "token_registry", None)
+        if reg is not None and hasattr(reg, "register_numeric"):
+            try:
+                reg.register_numeric(tok)
+            except Exception:
+                pass
+
+        if hasattr(o, "semantic_system"):
+            try:
+                o.semantic_system.ensure_numeric_token(tok, digit=digit, base=self.base)
+            except Exception:
+                pass
 
     def decode_token(self, tok):
         """
@@ -133,7 +148,7 @@ class NumericSystem:
         # Store it: dynamic expansion
         self.symbol_map[new_val] = tok
         self.inverse_symbol_map[tok] = new_val
-        self._register_numeric_token(tok)
+        self._register_numeric_token(tok, digit=(new_val % max(2, self.base)))
         return new_val
 
     def set_symbol_map(self, symbol_map):
@@ -152,7 +167,7 @@ class NumericSystem:
             token = random.choice(consonants) + random.choice(vowels)
             self.symbols[n] = token
             self.inverse[token] = n
-            self._register_numeric_token(token)
+            self._register_numeric_token(token, digit=n)
 
     def interpret(self, raw_number):
         """
@@ -189,7 +204,7 @@ class NumericSystem:
             if k not in self.symbols and random.random() < 0.3:
                 self.symbols[k] = v
                 self.inverse[v] = k
-                self._register_numeric_token(v)
+                self._register_numeric_token(v, digit=k)
 
     def mutate(self):
         """
@@ -222,7 +237,7 @@ class NumericSystem:
             tok = random.choice(consonants) + random.choice(vowels)
             self.symbols[n] = tok
             self.inverse[tok] = n
-            self._register_numeric_token(tok)
+            self._register_numeric_token(tok, digit=n)
         
         return tok
 
@@ -247,7 +262,7 @@ class NumericSystem:
             if not hasattr(o, "symbols"):
                 continue
             for k, v in o.symbols.items():
-                self._register_numeric_token(v)
+                self._register_numeric_token(v, digit=k)
                 if k not in self.symbols:
                     # occasionally borrow symbol directly
                     if random.random() < 0.5:
@@ -271,6 +286,7 @@ class NumericSystem:
                 token = random.choice(consonants) + random.choice(vowels)
                 self.symbols[n] = token
                 self.inverse[token] = n
+                self._register_numeric_token(token, digit=n)
 
         return self
     
@@ -282,17 +298,32 @@ class NumericSystem:
                 self.numeric_semantic[n] = tok
                 if hasattr(self.owner, "semantic_system"):
                     self.owner.semantic_system.ensure_numeric_token(tok, digit=n, base=self.base)
-            if hasattr(self.owner, "trust_channels"):
-                self.owner.trust_channels[teacher.id] = \
-                    min(1.0, self.owner.trust_channels.get(teacher.id, 0.0) + 0.05)
-            if hasattr(self.owner, "motivations"):
-                self.owner.motivations["esteem"] = min(
-                    1.0, self.owner.motivations.get("esteem", 0.5) + 0.03
-                )
+
+            if hasattr(self.owner, "adjust_trust"):
+                self.owner.adjust_trust(teacher.id, amount=0.02, channel=4)  # competence
+            elif hasattr(self.owner, "update_trust_channels"):
+                self.owner.update_trust_channels(teacher.id, reward=0.2)
+
+            motivations = getattr(self.owner, "motivations", None)
+            if not isinstance(motivations, dict):
+                motivations = getattr(self.owner, "needs", None)
+                if isinstance(motivations, dict):
+                    self.owner.motivations = motivations
+                else:
+                    self.owner.motivations = {}
+                motivations = self.owner.motivations
+            motivations["esteem"] = min(1.0, motivations.get("esteem", 0.5) + 0.03)
+
             if teacher.traits.get("teaching_drive", 0) > 0.4:
-                teacher.motivations["esteem"] = min(
-                    1.0, teacher.motivations.get("esteem", 0.5) + 0.02
-                )
+                teacher_motivations = getattr(teacher, "motivations", None)
+                if not isinstance(teacher_motivations, dict):
+                    teacher_motivations = getattr(teacher, "needs", None)
+                    if isinstance(teacher_motivations, dict):
+                        teacher.motivations = teacher_motivations
+                    else:
+                        teacher.motivations = {}
+                    teacher_motivations = teacher.motivations
+                teacher_motivations["esteem"] = min(1.0, teacher_motivations.get("esteem", 0.5) + 0.02)
 
     def speak_number(self, n):
         try:

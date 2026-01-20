@@ -74,8 +74,34 @@ class SemanticMixin:
                 sem_tokens.setdefault(k, v)
             self.semantic_system.tokens = sem_tokens
 
+            # unify concept token mapping (used by family clustering filters)
+            sem.setdefault("concept_tokens", {})
+            if not isinstance(sem["concept_tokens"], dict):
+                sem["concept_tokens"] = {}
+            self.semantic_system.concept_tokens = sem["concept_tokens"]
+
             # unify link graph
             self.semantic_system.links = sem["links"]
+
+            # unify family storage (used by coordinator + task system)
+            fams = sem.setdefault("families", {})
+            if not isinstance(fams, dict):
+                fams = {}
+                sem["families"] = fams
+
+            sem.setdefault("family_counter", 0)
+            try:
+                sem["family_counter"] = int(sem["family_counter"])
+            except Exception:
+                sem["family_counter"] = 0
+
+            if hasattr(self.semantic_system, "family_system"):
+                self.semantic_system.family_system.families = fams
+                self.semantic_system.families = fams
+                try:
+                    self.semantic_system.family_system.family_counter = int(sem["family_counter"])
+                except Exception:
+                    self.semantic_system.family_system.family_counter = 0
 
         # --- SOFT SEMANTIC SEEDING: LATENT ATTRACTORS --------------------
         # Gentle fields in meaning-space; not tied to any token or word.
@@ -119,6 +145,49 @@ class SemanticMixin:
         # dictionary + recency
         if not hasattr(self, "dict_vocab"):
             self.dict_vocab = set()
+
+    # ============================================================
+    # FAMILY BRIDGE (delegates to SemanticSystem)
+    # ============================================================
+    def detect_semantic_families(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.detect_semantic_families(*args, **kwargs)
+        return None
+
+    def prune_families(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.prune_families(*args, **kwargs)
+        return None
+
+    def family_reinforcement_update(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.family_reinforcement_update(*args, **kwargs)
+        return None
+
+    def family_soft_decay(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.family_soft_decay(*args, **kwargs)
+        return None
+
+    def name_families(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.name_families(*args, **kwargs)
+        return None
+
+    def export_family_snapshot(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.export_family_snapshot(*args, **kwargs)
+        return []
+
+    def maybe_broadcast_families(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system.maybe_broadcast_families(*args, **kwargs)
+        return None
+
+    def _integrate_family_gossip_line(self, *args, **kwargs):
+        if hasattr(self, "semantic_system") and hasattr(self.semantic_system, "family_system"):
+            return self.semantic_system.family_system._integrate_family_gossip_line(*args, **kwargs)
+        return None
         if not hasattr(self, "recent_tokens"):
             self.recent_tokens = []
 
