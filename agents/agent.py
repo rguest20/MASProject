@@ -8,7 +8,6 @@ from agents.mixins.emotion_mixin import EmotionMixin
 from agents.mixins.decision_mixin import DecisionMixin
 from agents.mixins.action_mixin import ActionMixin
 from agents.mixins.language_mixin import LanguageMixin
-from agents.mixins.language_mixin_v2 import LanguageMixinV2
 from agents.mixins.semantic_mixin import SemanticMixin
 from agents.mixins.semantic_stabilisation_mixin import SemanticStabilisationMixin
 from agents.mixins.social_mixin import SocialMixin
@@ -31,7 +30,7 @@ class Agent(
     ReasoningMixin,
     SemanticMixin,
     SemanticStabilisationMixin,
-    LanguageMixinV2,
+    LanguageMixin,
     SocialMixin,
     TeachingMixin,
     MutationMixin,
@@ -56,9 +55,10 @@ class Agent(
     Mixins provide everything else.
     """
 
-    def __init__(self, id, api=None):
+    def __init__(self, id, token_registry, api=None):
         super().__init__(id)
-        self._post_init()   # init hooks in mixins
+        self.token_registry = token_registry
+        self._post_init()
 
 
     def debug_dump_semantics(self, limit=200):

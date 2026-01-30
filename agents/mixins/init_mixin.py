@@ -2,8 +2,13 @@
 
 import random
 from collections import defaultdict, deque
-from evolution.counting import CountingSystem
-from agents.language import LanguageOrgan
+from agents.cognition.numeric_system import NumericSystem
+from agents.cognition.epistemic_system import EpistemicSystem
+from agents.cognition.identity_system import IdentitySystem
+from agents.cognition.semantic_system import SemanticSystem
+from agents.cognition.pragmatic_system import PragmaticSystem
+from agents.cognition.language_system import LanguageSystem
+from agents.cognition.language_organ import LanguageOrgan
 from agents.agent_constants import SYLLABLES
 
 
@@ -27,6 +32,7 @@ class InitMixin:
         init_methods = [
             "_init_agent_identity_semantics",
             "_init_emotion_system",
+            "_init_decision_system",
             "_init_semantic_system",
             "_init_semantic_stabilisation",
             "_init_language_system",
@@ -58,6 +64,32 @@ class InitMixin:
 
         # numeric symbolic mapping
         self.numeric_bias = random.uniform(-1, 1)
+
+        # program
+        if not hasattr(self, "program") or self.program is None:
+            self.program = []
+
+        # vocabulary (must exist before cognition systems initialise)
+        if not hasattr(self, "vocab") or not isinstance(self.vocab, set):
+            self.vocab = set(SYLLABLES)
+        else:
+            self.vocab |= set(SYLLABLES)
+        if not hasattr(self, "dict_vocab") or not isinstance(self.dict_vocab, set):
+            self.dict_vocab = set()
+        if not hasattr(self, "recent_tokens") or not isinstance(self.recent_tokens, list):
+            self.recent_tokens = []
+
+        # Cognitive systems
+        self.semantic_system = SemanticSystem(owner=self)
+        self.epistemic_system = EpistemicSystem(owner=self)
+        self.identity_system = IdentitySystem(owner=self)
+        self.numeric_system = NumericSystem(owner=self)
+        self.pragmatic_system = PragmaticSystem(owner=self)
+        # LanguageSystem is initialised later by LanguageMixin after semantics are ready.
+        self.language_system = LanguageSystem(owner=self)
+        # Back-compat: many parts of the codebase refer to `agent.counting`.
+        self.counting = self.numeric_system
+
         self.symbol_map = {}
         self.symbol_map_history = {}
         self.inverse_symbol_map = {}
@@ -75,15 +107,6 @@ class InitMixin:
             "collaboration": 0.0,
             "safety": 0.0
         })
-
-        # program
-        if not hasattr(self, "program") or self.program is None:
-            self.program = []
-
-        # vocabulary
-        self.vocab = set(SYLLABLES)
-        self.dict_vocab = set()
-        self.recent_tokens = []
 
         # traits
         self.traits = {
@@ -144,7 +167,6 @@ class InitMixin:
         self._dyn_last_refresh_tick = -999999
 
         # organs
-        self.counting = CountingSystem(owner=self)
         self.language = LanguageOrgan(
             owner=self,
             trust_threshold=self.traits["trust_threshold"]
@@ -158,6 +180,9 @@ class InitMixin:
             "esteem": 0.5,
             "play": 0.6
         }
+        # Back-compat: some systems refer to `agent.motivations` (older name).
+        if not hasattr(self, "motivations") or not isinstance(getattr(self, "motivations", None), dict):
+            self.motivations = dict(self.needs)
 
         # action list
         self.available_actions = [

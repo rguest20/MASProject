@@ -142,7 +142,7 @@ def _teaching_action(agent, coordinator):
     word = random.choice(list(agent.semantic["vecs"].keys()))
 
     try:
-        agent.teach_student(student, word)
+        agent.teaching_system.teach_student(student, word)
         return True
     except Exception:
         return False

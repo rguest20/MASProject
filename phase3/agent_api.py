@@ -33,8 +33,8 @@ class AgentAPI:
     def _safe_write(self, fs, path, text, append=False):
         """Append or write safely, ensuring parent dirs exist."""
         parent = "/".join(path.split("/")[:-1])
-        if parent and parent not in ("", "/"):
-            fs.make_dirs(parent)  # NEW: ensure folder exists
+        if parent and parent not in ("", "/") and hasattr(fs, "make_dirs"):
+            fs.make_dirs(parent)
 
         if append:
             fs.append_text(path, text)
@@ -44,6 +44,16 @@ class AgentAPI:
     # --------------------------------------------------
     # Basic FS I/O
     # --------------------------------------------------
+    def list_paths(self, prefix="/", scope="world"):
+        if self.agent.energy <= 0.0:
+            return []
+        fs = self.world if scope == "world" else self.home
+        self._charge(self.COST_READ, "read")
+        self._report(self.agent, "LIST", {"prefix": prefix, "scope": scope})
+        if hasattr(fs, "list_paths"):
+            return fs.list_paths(prefix=prefix)
+        return []
+
     def read_text(self, path, scope="world"):
         if self.agent.energy <= 0.0:
             return ""
@@ -67,6 +77,18 @@ class AgentAPI:
         self._charge(self.COST_WRITE, "write")
         self._safe_write(fs, path, text, append=True)
         self._report(self.agent, "WRITE", {"path": path, "scope": scope, "append": True})
+
+    # --------------------------------------------------
+    # Canvas
+    # --------------------------------------------------
+    def draw_pixel(self, x, y, rgb, scope="world"):
+        if self.agent.energy <= 0.0:
+            return
+        fs = self.world if scope == "world" else self.home
+        self._charge(self.COST_DRAW, "draw")
+        if hasattr(fs, "draw_pixel"):
+            fs.draw_pixel(x, y, rgb)
+        self._report(self.agent, "DRAW", {"x": x, "y": y, "rgb": rgb, "scope": scope})
 
     # --------------------------------------------------
     # HELP REQUEST / RESPONSE SYSTEM

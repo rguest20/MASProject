@@ -215,11 +215,25 @@ class SemanticStabilisationMixin:
             if tok not in links:
                 continue
             nbrs = links[tok]
-            for nb in list(nbrs.keys()):
-                nbrs[nb] *= link_dampen
-                back = links.get(nb)
-                if back and tok in back:
-                    back[tok] *= link_dampen
+            for nb, entry in list(nbrs.items()):
+                # --- dampen forward link ---
+                if isinstance(entry, dict):
+                    entry["w"] *= link_dampen
+                    entry["age"] = max(0, entry.get("age", 0))
+                    nbrs[nb] = entry
+                else:
+                    nbrs[nb] = entry * link_dampen
+
+                # --- dampen backward link ---
+                back_row = links.get(nb)
+                if back_row and tok in back_row:
+                    back_entry = back_row[tok]
+                    if isinstance(back_entry, dict):
+                        back_entry["w"] *= link_dampen
+                        back_entry["age"] = max(0, back_entry.get("age", 0))
+                        back_row[tok] = back_entry
+                    else:
+                        back_row[tok] = back_entry * link_dampen
 
 
     # ------------------------------------------------------------

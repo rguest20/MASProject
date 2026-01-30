@@ -2,6 +2,7 @@
 
 ## Table of Contents
 - [Overview](#overview)
+- [Quick Start](#quick-start)
 - [Agent Criteria](#agent-criteria)
 - [System Criteria](#system-criteria)
 - [Risks & Failure Modes](#risks--failure-modes)
@@ -24,6 +25,15 @@
 - [Observations So Far](#observations-so-far)
 
 The Agent Sandbox Project is a research-oriented environment for studying emergent behaviour in multi-agent systems. Each agent develops its own internal semantic map, communicates using evolving token structures, and adapts over generations through evolutionary pressure. By observing how concepts, cooperation, subcultures, numeracy, and proto-language evolve, this project aims to uncover how complex collective cognition can arise from simple individual components.
+
+## Quick Start
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 run.py
+```
 
 ## Overview
 This project is a sandbox for exploring how emergent behaviour arises within a multi-agent system, both at the individual agent level and at the collective level.  

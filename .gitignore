@@ -3,3 +3,7 @@ sandbox_root/
 cultural_log.csv
 dialogue_log.txt
 generation_report.txt
+cultural_log*
+dialogue_log.txt
+generation_report.txt
+.trunk/

@@ -193,28 +193,6 @@ class SocialMixin:
         )
 
     # ----------------------------------------------------
-    # Teaching willingness (used for teacher selection)
-    # ----------------------------------------------------
-    def teaching_willingness(self, partner_id):
-        """
-        Produces a scalar measuring desire to teach partner:
-            competence   40%
-            reliability  30%
-            affinity     20%
-            collaboration 10%
-        """
-        ch = self.trust_channels.get(partner_id)
-        if not ch:
-            return 0.0
-
-        return (
-            0.40 * ch["competence"] +
-            0.30 * ch["reliability"] +
-            0.20 * ch["affinity"] +
-            0.10 * ch["collaboration"]
-        )
-
-    # ----------------------------------------------------
     # Social memory decay
     # ----------------------------------------------------
     def decay_social_memory(self, decay_rate, gen_index, stale_after=50, prune_threshold=0.02):

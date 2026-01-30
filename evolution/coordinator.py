@@ -7,9 +7,43 @@ import numpy as np
 
 from agents.agent import Agent
 from evolution.challenge import ChallengeSystem
-from evolution.counting import CountingSystem
+from agents.cognition.numeric_system import NumericSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
 from evolution.programs import run_program, safe, mutate_program
+from evolution.mixins.global_registry import GlobalTokenRegistry
+from evolution.coordinator_settings import (
+    POP_SIZE,
+    ELITE_RATIO,
+    ENABLE_DICTIONARY_INJECTION,
+    UTTER_CHANCE,
+    UTTER_EFFECT,
+    REWARD_EPS,
+    REWARD_TEMP,
+    PHASE2_LR,
+    TASK_SEMANTIC_ALIGNMENT,
+    MATE_POOL_SIZE,
+    COMPAT_WEIGHT,
+    FITNESS_WEIGHT,
+    MEMORY_WEIGHT,
+    DIVERSITY_WEIGHT,
+    GOSSIP_PAIRS_PER_GEN,
+    TEACH_PROB,
+    TEACH_TOP_FRACTION,
+    TEACH_PAIRS_PER_PASS,
+    TEACH_ROUNDS_PER_GEN,
+    TEACH_ACC_TEMP,
+    IMPROVE_ONLY_TEACH,
+    OUTCOME_SCALE,
+    REFERENTIAL_BONUS,
+    MAX_COOP_BONUS,
+    MAX_NOVELTY_BONUS,
+    MAX_FIT,
+    ENERGY_MAX,
+    IDLE_TAX,
+    MIN_PARTICIPATION,
+)
+from evolution.mixins.coordinator_task_mixin import CoordinatorTaskMixin
+from evolution.mixins.coordinator_language_mixin import CoordinatorLanguageMixin
 
 from evolution.behaviours.orchestration import orchestrate_action
 
@@ -24,54 +58,10 @@ def PERF(msg):
     print(f"[PERF {time.time():.3f}] {msg}", flush=True)
 
 
-# ===========================
-# Tunables / Knobs
-# ===========================
-POP_SIZE               = 30
-ELITE_RATIO            = 0.20
-
-ENABLE_DICTIONARY_INJECTION = False
-
-# --- Language
-UTTER_CHANCE           = 1.0
-UTTER_EFFECT           = 0.15
-REWARD_EPS             = 1e-9
-REWARD_TEMP            = 1.0
-PHASE2_LR              = 0.10
-TASK_SEMANTIC_ALIGNMENT = "semantic_alignment"
-
-# --- Social / cultural
-MATE_POOL_SIZE         = 12
-COMPAT_WEIGHT          = 0.5
-FITNESS_WEIGHT         = 1.0
-MEMORY_WEIGHT          = 0.8
-DIVERSITY_WEIGHT       = 0.2
-
-GOSSIP_PAIRS_PER_GEN   = 20
-TEACH_PROB             = 0.15
-TEACH_TOP_FRACTION     = 0.20
-TEACH_PAIRS_PER_PASS   = 16     # ~half pop attempts each pass
-TEACH_ROUNDS_PER_GEN   = 2      # we will call semantic_teaching_phase() twice per gen
-TEACH_ACC_TEMP         = 1.0    # keep reward linear in accuracy
-IMPROVE_ONLY_TEACH     = True
-OUTCOME_SCALE          = 0.001
-REFERENTIAL_BONUS = 0.35  # 0..1 (try 0.2–0.5)
-
-# --- Safety caps
-MAX_COOP_BONUS         = 1000.0
-MAX_NOVELTY_BONUS      = 1000.0
-MAX_FIT                = 1e6
-
-# --- Phase-3 energy / participation
-ENERGY_MAX             = 100.0
-IDLE_TAX               = 1.0
-MIN_PARTICIPATION      = 1
-
-
-class Coordinator:
+class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
     def __init__(self):
-        self.active_tasks = self.load_tasks()
         self.semantic_alignment_tasks = []
+        self.token_registry = GlobalTokenRegistry()
 
         self.cached_dictionary_words = None
         self.semantic_seeds = {"words": [], "synonyms": [], "antonyms": []}
@@ -80,7 +70,7 @@ class Coordinator:
 
         # Core state
         self.generation_index = 0
-        self.agents = [Agent(i) for i in range(POP_SIZE)]
+        self.agents = [Agent(id=i, token_registry=self.token_registry) for i in range(POP_SIZE)]
         self.last_utterances = {}   # agent_id -> utterance
         self.challenge = ChallengeSystem()
         self.action_queue = []
@@ -105,17 +95,27 @@ class Coordinator:
         self.bus = bus
         self.ledger = ledger
 
-        # Attach API & energy to all agents
+        # Attach API, energy, and apply initial semantic seeds to all agents
         for a in self.agents:
             if a.id in self.agent_apis:
                 a.attach_api(self.agent_apis[a.id])
             a.energy = ENERGY_MAX
 
+            # Apply global semantic seeds once at initialisation
+            try:
+                if hasattr(a, "semantic_system") and self.semantic_seeds:
+                    a.semantic_system.receive_semantic_seeds(self.semantic_seeds)
+            except Exception:
+                pass
+
         # identity grounding for all agents
         for a in self.agents:
             tok = f"A{a.id}"
             a.vocab.add(tok)               # ensure language sees it
-            a.mark_identity_token(tok)     # push semantic meaning into identity subspace
+            if hasattr(a, "identity_system"):
+                a.identity_system.mark_identity_token(tok)
+            else:
+                a.mark_identity_token(tok)     # fallback bridge
 
         # Homeostatic control state
         self.archetype_stats = {
@@ -139,6 +139,21 @@ class Coordinator:
             "min_frac_coop": 0.25,
             "max_frac_coop": 0.75,
         }
+
+        self.task_scorers = {
+            # already / obvious
+            "compare_numbers": self.score_compare_numbers,
+            "reconcile_counts": self.score_reconcile_counts,
+            "pref_align": self.score_pref_align,
+
+            # coordination pressure
+            "agreement_dialogue": self.score_agreement_dialogue,
+            "similarity_debate": self.score_similarity_debate,
+            "definition_swap": self.score_definition_swap,
+            "misunderstanding_detection": self.score_misunderstanding_detection,
+        }
+
+        self.completed_tasks = []
 
     # -----------------------------
     # Helpers
@@ -236,6 +251,24 @@ class Coordinator:
     def _clamp(self, v, lo=0.0, hi=1.0):
         return max(lo, min(hi, v))
 
+    def agent_by_id(self, agent_id):
+        for ag in self.agents:
+            if ag.id == agent_id:
+                return ag
+        return None
+
+    def sample_random_utterance(self):
+        if not hasattr(self, "dialogue_log") or not self.dialogue_log:
+            return None
+        entry = random.choice(self.dialogue_log)
+        if not entry:
+            return None
+        turns = entry.get("turns") or []
+        if not turns:
+            return None
+        turn = random.choice(turns)
+        return turn.get("utterance")
+
     def damp_trait(self, value, strength=0.05):
         # pull traits gently toward neutral to avoid absorbing extremes
         return value + (0.5 - value) * strength
@@ -306,672 +339,6 @@ class Coordinator:
             out[k] = self._clamp(mean, -1.0, 1.0)
         return out
 
-    # ---------------------------------------------------------
-    #  Archetype stats
-    # ---------------------------------------------------------
-    def _update_archetype_stats(self):
-        """
-        Compute current distribution of archetypes over the population.
-        Expects each agent to expose `emergent_archetype` with one of:
-            "explorer", "cooperator", "habit", "loner"
-        Gracefully degrades if missing.
-        """
-        counts = {
-            "explorer": 0,
-            "cooperator": 0,
-            "habit": 0,
-            "loner": 0,
-        }
-
-        for ag in self.agents:
-            label = getattr(ag, "emergent_archetype", None)
-            if label is None:
-                # if you use a different attribute name, change this line
-                label = getattr(ag, "archetype_label", None)
-
-            if label in counts:
-                counts[label] += 1
-
-        total = sum(counts.values())
-        if total == 0:
-            # No archetype info yet; leave stats unchanged
-            return
-
-        self.archetype_stats = {k: counts[k] / total for k in counts}
-        
-    def classify_agent_archetype(self, ag):
-        """
-        Classify an agent into one of:
-            "explorer", "cooperator", "habit", "loner"
-
-        Based on existing traits:
-        - novelty_weight
-        - cooperation_weight
-        - stability_weight (inverse of exploration)
-        - trust_threshold (higher = more isolated)
-        """
-
-        # pull traits safely
-        nov = float(ag.traits.get("novelty_weight", 0.5))
-        coop = float(ag.traits.get("cooperation_weight", 0.5))
-        stab = float(ag.traits.get("stability_weight", 0.5))
-        trust = float(ag.traits.get("trust_threshold", 0.5))
-
-        # ---- EXPLORER ----
-        # seeks novelty, low stability, flexible trust
-        if nov > 0.60 and stab < 0.40:
-            return "explorer"
-
-        # ---- COOPERATOR ----
-        # high cooperation, not too isolated
-        if coop > 0.60 and trust < 0.65:
-            return "cooperator"
-
-        # ---- HABIT LEARNER ----
-        # high stability → pattern seeker / routine builder
-        if stab > 0.60:
-            return "habit"
-
-        # ---- LONER ----
-        # high trust threshold (strict), low cooperation
-        if trust > 0.70 and coop < 0.40:
-            return "loner"
-
-        # default fallback → classify as mild cooperator
-        return "cooperator"
-
-    # ---------------------------------------------------------
-    #  Homeostatic task weighting
-    # ---------------------------------------------------------
-    def _update_task_weights_homeostasis(self, verbose=False):
-        """
-        Update task weights for both old numeric tasks and new
-        linguistic-emergence tasks.
-        """
-        self._update_archetype_stats()
-        dist = self.archetype_stats
-
-        cfg = self.homeostasis_cfg
-        low = cfg["low_frac"]
-        high = cfg["high_frac"]
-        min_coop = cfg["min_frac_coop"]
-        max_coop = cfg["max_frac_coop"]
-
-        # --- Base weights ---
-        w = {
-            # numeric / structural
-            "compare_numbers": 1.0,
-            "reconcile_counts": 1.0,
-            "agreement_dialogue": 1.0,
-
-            # exploratory
-            "describe_concept": 0.7,
-            "narrative_chain": 0.7,
-            "prediction_task": 0.6,
-
-            # alignment / cooperative
-            "similarity_debate": 0.7,
-            "role_assignment": 0.6,
-            "misunderstanding_detection": 0.7,
-            "definition_swap": 0.6,
-
-            # pattern / habit reinforcement
-            "action_reconstruction": 0.7,
-            "property_attribution": 0.7,
-            "verb_noun_compat": 0.7,
-        }
-
-        # ------------------------------
-        # Explorers homeostasis
-        # ------------------------------
-        frac_exp = dist.get("explorer", 0.0)
-        if frac_exp < low:
-            # need novelty + expansion
-            w["describe_concept"] *= 2.2
-            w["narrative_chain"] *= 2.0
-            w["prediction_task"] *= 1.8
-        elif frac_exp > high:
-            # too chaotic: damp exploration
-            w["describe_concept"] *= 0.5
-            w["narrative_chain"] *= 0.5
-            w["prediction_task"] *= 0.6
-
-        # ------------------------------
-        # Habit learners homeostasis
-        # ------------------------------
-        frac_habit = dist.get("habit", 0.0)
-        if frac_habit < low:
-            # need stability / structure
-            w["action_reconstruction"] *= 2.0
-            w["property_attribution"] *= 2.0
-            w["verb_noun_compat"] *= 2.0
-            w["reconcile_counts"] *= 1.5
-        elif frac_habit > high:
-            # too rigid → loosen the pattern
-            w["action_reconstruction"] *= 0.5
-            w["property_attribution"] *= 0.5
-            w["verb_noun_compat"] *= 0.6
-            w["reconcile_counts"] *= 0.5
-
-        # ------------------------------
-        # Cooperators homeostasis
-        # ------------------------------
-        frac_coop = dist.get("cooperator", 0.0)
-        if frac_coop < min_coop:
-            w["agreement_dialogue"] *= 2.0
-            w["similarity_debate"] *= 1.7
-            w["misunderstanding_detection"] *= 1.8
-            w["role_assignment"] *= 1.6
-            w["definition_swap"] *= 1.5
-        elif frac_coop > max_coop:
-            # over-alignment → push diversity
-            w["agreement_dialogue"] *= 0.5
-            w["similarity_debate"] *= 0.6
-            w["role_assignment"] *= 0.7
-            w["definition_swap"] *= 0.7
-
-        # ------------------------------
-        # Loners homeostasis
-        # ------------------------------
-        frac_lon = dist.get("loner", 0.0)
-        if frac_lon > 0.15:
-            # nudge *into* socially grounding tasks
-            w["agreement_dialogue"] *= 1.3
-            w["misunderstanding_detection"] *= 1.3
-            w["similarity_debate"] *= 1.2
-            w["role_assignment"] *= 1.2
-
-            # reduce purely self-oriented tasks
-            w["prediction_task"] *= 0.7
-            w["narrative_chain"] *= 0.7
-
-        # ------------------------------
-        # Normalise
-        # ------------------------------
-        total = sum(w.values())
-        if total <= 0:
-            n = len(w)
-            self.task_weights = {k: 1.0 / n for k in w}
-        else:
-            self.task_weights = {k: v / total for k, v in w.items()}
-
-        if verbose:
-            print("[HOMEOSTASIS] archetypes:", dist)
-            print("[HOMEOSTASIS] task_weights:", self.task_weights)
-
-    # ---------------------------------------------------------
-    #  Build tasks for a generation
-    # ---------------------------------------------------------
-    def _build_task_batch(self, num_tasks: int, gen: int):
-        self._update_task_weights_homeostasis(verbose=(gen % 20 == 0))
-
-        batch = []
-        for _ in range(num_tasks):
-            ttype = self._sample_task_type()
-
-            if ttype == "compare_numbers":
-                task = self.generate_numeric_compare_task()
-            elif ttype == "reconcile_counts":
-                task = self.generate_reconcile_counts_task()
-            elif ttype == "agreement_dialogue":
-                task = self.generate_agreement_dialogue_task()
-
-            # ---------- new linguistic task builders ----------
-            elif ttype == "describe_concept":
-                task = self.generate_describe_concept_task()
-            elif ttype == "narrative_chain":
-                task = self.generate_narrative_chain_task()
-            elif ttype == "prediction_task":
-                task = self.generate_prediction_task()
-
-            elif ttype == "similarity_debate":
-                task = self.generate_similarity_debate_task()
-            elif ttype == "role_assignment":
-                task = self.generate_role_assignment_task()
-            elif ttype == "misunderstanding_detection":
-                task = self.generate_misunderstanding_detection_task()
-            elif ttype == "definition_swap":
-                task = self.generate_definition_swap_task()
-
-            elif ttype == "action_reconstruction":
-                task = self.generate_action_reconstruction_task()
-            elif ttype == "property_attribution":
-                task = self.generate_property_attribution_task()
-            elif ttype == "verb_noun_compat":
-                task = self.generate_verb_noun_compat_task()
-
-            else:
-                # safety fallback
-                task = self.generate_numeric_compare_task()
-
-            batch.append(task)
-
-        return batch
-
-    def assign_archetypes(self, population, classifier_fn):
-        """
-        classifier_fn(agent) -> one of {"explorer", "cooperator", "habit", "loner"}
-        """
-        for ag in population:
-            ag.emergent_archetype = classifier_fn(ag)
-
-    # ---------------------------------------------------------
-    #  Task type sampling
-    # ---------------------------------------------------------
-    def _sample_task_type(self) -> str:
-        """
-        Sample a task type according to self.task_weights.
-        """
-        items = list(self.task_weights.items())
-        types, weights = zip(*items)
-        r = random.random()
-        cum = 0.0
-        for t, w in zip(types, weights):
-            cum += w
-            if r <= cum:
-                return t
-        return types[-1]  # numerical safety
-
-    # -----------------------------
-    # Language & Social
-    # -----------------------------
-    def gossip_exchange(self):
-        """
-        Trust-safe scalar gossip:
-        - Sender shares a small reputation list (id -> scalar)
-        - Receiver:
-            (a) nudges trust toward the *sender* (channel=2)
-            (b) nudges indirect trust toward named third parties (channel=3)
-        """
-        agents = self.agents
-        if len(agents) < 2:
-            return
-
-        teacher, student = random.sample(agents, 2)
-        if random.random() < 0.3:  # not every gossip is a teaching moment
-            if teacher.semantic["vecs"]:  # avoid empty vocab crash
-                word = random.choice(list(teacher.semantic["vecs"].keys()))
-                teacher.teach_student(student, word)
-
-        for sender in agents:
-            # sender exports compact public view: List[(pid, rep)]
-            rep_list = sender.export_reputation(top_k=5) or []
-            conf = float(getattr(sender, "reputation_strength", 0.012))
-
-            # pick 1–3 receivers
-            num_receivers = random.randint(1, 3)
-            receivers = random.sample(agents, min(num_receivers, len(agents)))
-
-            for recv in receivers:
-                if recv.id == sender.id:
-                    continue
-
-                # (a) trust toward sender for social-info credibility
-                recv.adjust_trust(
-                    target_id=sender.id,
-                    amount=min(conf, 0.02),   # <-- capped
-                    channel=2
-                )
-
-                # (b) indirect third-party nudges
-                for pid, rep in rep_list:
-                    if pid == recv.id or pid == sender.id:
-                        continue
-                    influence = 0.05 * conf * float(rep)
-                    if influence == 0.0:
-                        continue
-                    recv.adjust_trust(
-                        target_id=pid,
-                        amount=min(influence, 0.015),
-                        channel=3
-                    )
-                
-                # (c) semantic-sharing (Option B — low gain)
-                if sender.semantic["vecs"]:
-                    # 1. choose a word from sender's public vocabulary
-                    shared_word = random.choice(list(sender.semantic["vecs"].keys()))
-
-                    # 2. student observes it with low semantic impact
-                    recv.observe_utterance(
-                        shared_word,
-                        gain_scale=0.25   # <--- safe, gentle, will not homogenise vocab
-                    )
-
-    def semantic_teaching_phase(self):
-        """
-        Teacher shares a tiny semantic bundle; student predicts and we
-        reward accuracy via cosine similarity. Trust channels updated both ways.
-        """
-        if not self.agents:
-            return
-
-        pairs = min(TEACH_PAIRS_PER_PASS, len(self.agents))
-        for _ in range(pairs):
-            teacher, student = random.sample(self.agents, 2)
-
-            # Teacher selectivity: willingness threshold dampens spam teaching
-            if teacher.teaching_willingness(student.id) < 0.1 and random.random() < 0.85:
-                continue
-
-            bundle = teacher.export_semantic_bundle(max_keys=3)
-            if not bundle:
-                continue
-
-            # Student predicts
-            pred = student.attempt_prediction(bundle)
-            if pred is None:
-                continue
-
-            # Ground truth: mean teacher vector of the same tokens
-            toks = bundle.get("tokens", []) or []
-            vecs = teacher.semantic["vecs"]
-            gt = None
-            try:
-                acc = None
-                if toks:
-                    # average known vectors; if missing, skip
-                    cols = [vecs[t] for t in toks if t in vecs]
-                    if not cols:
-                        continue
-                    accv = cols[0][:]
-                    for v in cols[1:]:
-                        accv = add(accv, v)
-                    gt = scale(accv, 1.0 / len(cols))
-                else:
-                    continue
-            except Exception:
-                continue
-
-            # Accuracy via cosine similarity in [-1,1] → map to [-1,1] reward
-            try:
-                acc = cos_sim(pred, gt)  # already in [-1,1]
-            except Exception:
-                acc = 0.0
-
-            if TEACH_ACC_TEMP != 1.0 and acc is not None:
-                # optional shaping; we keep linear by default
-                acc = math.copysign(abs(acc) ** TEACH_ACC_TEMP, acc)
-
-            reward = max(-1.0, min(1.0, float(acc)))
-            if reward > 0:
-                k = 0.10 * reward   # increase
-            else:
-                k = 0.02 * reward   # soften penalty
-
-            # Apply rewards
-            teacher.apply_teaching_reward(student.id, reward)
-            student.apply_learning_reward(teacher.id, reward)
-
-            # Update trust channels directly (competence/reliability/collaboration)
-            # Teacher judged competent & reliable if reward > 0; else slight penalty
-            k = 0.06 * reward
-            teacher.update_trust_channels(student.id, reward)   # multi-channel small drift
-            student.update_trust_channels(teacher.id, reward)
-
-            # Targeted nudges:
-            student.adjust_trust(
-                teacher.id,
-                amount=max(-0.03, min(0.03, k)),
-                channel=4
-            )
-            teacher.adjust_trust(
-                student.id,
-                amount=max(-0.02, min(0.02, k * 0.5)),
-                channel=3
-            )
-
-    def language_feedback(self):
-        """
-        Base fitness → [-1,1] reward (as before), plus a referential bonus:
-        If a listener hears an utterance whose tokens overlap the speaker's
-        last action tokens, the listener learns more strongly from it.
-        """
-        tots = [a.total_fitness for a in self.agents]
-        mmin, mmax = min(tots), max(tots)
-        span = (mmax - mmin) if (mmax - mmin) > REWARD_EPS else 1.0
-
-        base_r = {}
-        for a in self.agents:
-            x01 = (a.total_fitness - mmin) / span
-            if REWARD_TEMP != 1.0:
-                x01 = x01 ** REWARD_TEMP
-            base_r[a.id] = (x01 * 2.0) - 1.0  # [-1,1]
-
-        def jaccard(a_tokens, b_tokens):
-            A, B = set(a_tokens), set(b_tokens)
-            if not A or not B: return 0.0
-            return len(A & B) / len(A | B)
-
-        for listener in self.agents:
-            for speaker_id, utt in self.last_utterances.items():
-                if listener.id == speaker_id:
-                    continue
-
-                # baseline reward from fitness
-                r = base_r.get(speaker_id, 0.0)
-
-                # referential bonus: overlap(utter_tokens, speaker_last_tokens)
-                speaker = next((x for x in self.agents if x.id == speaker_id), None)
-                if speaker is not None:
-                    utt_tokens = utt.split()
-                    act_tokens = getattr(speaker, "_last_tokens", []) or []
-                    r += REFERENTIAL_BONUS * jaccard(utt_tokens, act_tokens)
-
-                # clamp to [-1,1]
-                r = max(-1.0, min(1.0, r))
-
-                speaker = next((x for x in self.agents if x.id == speaker_id), None)
-                if speaker is not None:
-                    listener._maybe_learn_numeric_from(speaker)
-
-                listener.learn_from_feedback(utt, reward=r, lr=PHASE2_LR)
-
-        # entropy anti-collapse
-        for a in self.agents:
-            assoc = a.utterance_memory["associations"]
-            if len(assoc) >= 2:
-                spread = max(assoc.values()) - min(assoc.values())
-                if spread < 0.2:
-                    for s in a.symbol_drift:
-                        a.symbol_drift[s] *= 0.97
-
-        # If utterances collapsed to 1–2 types, nudge exploration by decaying LMs
-        uniq_utts = len({u for u in self.last_utterances.values()})
-        if uniq_utts <= 2:
-            for a in self.agents:
-                try:
-                    a.lm.decay(rate=0.99)
-                except Exception:
-                    pass
-    
-    def reward_penalty_phase(self):
-        """
-        Apply simple reinforcement dynamics based on teaching outcomes and trust.
-        Rewards improve fitness and energy; penalties reduce trust.
-        """
-        for agent in self.agents:
-            # Baseline from past interactions
-            net_outcome = sum(v for (_, v) in agent.interaction_memory[-10:]) if hasattr(agent, "interaction_memory") else 0.0
-
-            # Convert to reward signal
-            reward_signal = max(-1.0, min(1.0, net_outcome * 0.1))
-
-            # Energy and trust adjustments
-            if reward_signal > 0:
-                agent.energy += 0.05 * reward_signal
-                agent.trust_bias = getattr(agent, "trust_bias", 0.0) + 0.01 * reward_signal
-                agent.own_fitness += reward_signal
-            elif reward_signal < 0:
-                agent.energy -= 0.05 * abs(reward_signal)
-                agent.trust_bias = getattr(agent, "trust_bias", 0.0) - 0.01 * abs(reward_signal)
-                # Apply a small penalty to overall trust network
-                for pid in agent.social_memory.keys():
-                    agent.adjust_trust(pid, amount=-0.005 * abs(reward_signal), channel=4)
-        
-        for agent in self.agents:
-            agent.energy *= random.uniform(0.96, 0.99)
-            # prevent runaway accumulation
-            agent.energy = min(agent.energy, 100.0)
-
-    def communicate(self, speaker, listener, utterance):
-        """
-        Simple communication feedback loop.
-        Success if listener has seen the utterance before (shared memory).
-        Adjusts energy and trust thresholds to reward comprehension.
-        """
-        shared = utterance in listener.utterance_memory["usage_count"]
-        coop_avg = (speaker.traits["cooperation_weight"] + listener.traits["cooperation_weight"]) / 2
-        success = shared and random.random() < coop_avg
-
-        if success:
-            # Reward energy and trust relaxation
-            delta_e = 0.5
-            speaker.energy = min(100.0, speaker.energy + delta_e)
-            listener.energy = min(100.0, listener.energy + delta_e)
-
-            # communication success → lower trust threshold a bit
-            speaker.traits["trust_threshold"] = max(
-                0.0, speaker.traits["trust_threshold"] - 0.03
-            )
-            listener.traits["trust_threshold"] = max(
-                0.0, listener.traits["trust_threshold"] - 0.03
-            )
-
-            # and strengthen mutual trust (reliability / collaboration)
-            speaker.adjust_trust(listener.id, amount=+0.02, channel=2)
-            listener.adjust_trust(speaker.id, amount=+0.02, channel=2)
-            speaker.adjust_trust(listener.id, amount=+0.01, channel=3)
-            listener.adjust_trust(speaker.id, amount=+0.01, channel=3)
-        else:
-            # Penalise slight energy loss and raise trust threshold
-            delta_e = 0.3
-            speaker.energy = max(0.0, speaker.energy - delta_e)
-            listener.energy = max(0.0, listener.energy - delta_e)
-            speaker.traits["trust_threshold"] = min(
-                1.0, speaker.traits["trust_threshold"] + 0.005
-            )
-            listener.traits["trust_threshold"] = min(
-                1.0, listener.traits["trust_threshold"] + 0.005
-            )
-
-            # small trust penalty on both sides (competence channel)
-            speaker.adjust_trust(listener.id, amount=-0.01, channel=4)
-            listener.adjust_trust(speaker.id, amount=-0.01, channel=4)
-
-            # decay failed association
-            old = speaker.utterance_memory["associations"].get(utterance, 0.0)
-            speaker.utterance_memory["associations"][utterance] = old * 0.9
-
-    # -----------------------------
-    # Teaching (optional)
-    # -----------------------------
-    def crossover_program(prog_a, prog_b):
-        try:
-            len_a, len_b = len(prog_a), len(prog_b)
-            if len_a == 0 or len_b == 0:
-                return prog_a[:] if len_a >= len_b else prog_b[:]
-            cut_a = random.randrange(len_a)
-            cut_b = random.randrange(len_b)
-            child = prog_a[:cut_a] + prog_b[cut_b:]
-            if len(child) == 0:
-                child = (prog_a if random.random() < 0.5 else prog_b)[:]
-            return child
-        except Exception:
-            return prog_a[:]
-
-    def teaching_phase(self):
-        """
-        Hybrid teaching phase (trust-selective):
-        1. High-fitness agents act as teachers.
-        2. Each teacher selects students based on trust & willingness.
-        3. Program + semantic learning both occur.
-        4. Rewards and energy adjustments propagate through both sides.
-        """
-        ranked = sorted(self.agents, key=lambda a: a.total_fitness, reverse=True)
-        top_n = max(1, int(len(self.agents) * TEACH_TOP_FRACTION))
-        teachers = ranked[:top_n]
-
-        for teacher in teachers:
-            # --- only some teachers act each gen ---
-            if random.random() > TEACH_PROB:
-                continue
-
-            # choose student candidates weighted by teacher's trust
-            candidates = [a for a in self.agents if a.id != teacher.id]
-            if not candidates:
-                continue
-
-            # compute willingness scores
-            weights = []
-            for c in candidates:
-                will = max(0.0, teacher.teaching_willingness(c.id))
-                # low-trust partners still possible but rarer
-                weights.append(0.05 + will)
-
-            student = random.choices(candidates, weights=weights)[0]
-
-            # just before or after a teacher tries to teach
-            student.teaching_attempted = True
-            teacher.teaching_attempted = True
-
-            # --- skip if trust threshold not met ---
-            if teacher.teaching_willingness(student.id) < teacher.traits.get("trust_threshold", 0.3):
-                continue
-
-            # ------------------------------
-            # 1. Program inheritance (existing logic)
-            # ------------------------------
-            new_prog = Coordinator.crossover_program(student.program, teacher.program)
-            new_prog = mutate_program(new_prog)
-
-            if IMPROVE_ONLY_TEACH:
-                old_fit = student.own_fitness
-                try:
-                    tmp_fit = run_program(new_prog)
-                except Exception:
-                    tmp_fit = -1e9
-                if tmp_fit > old_fit:
-                    student.program = new_prog
-                    outcome = (tmp_fit - old_fit) * OUTCOME_SCALE
-                    student.remember_interaction(teacher.id, outcome=outcome, gen_index=self.generation_index)
-                    teacher.remember_interaction(student.id, outcome=outcome * 0.5, gen_index=self.generation_index)
-            else:
-                student.program = new_prog
-
-            # ------------------------------
-            # 2. Semantic teaching (new layer)
-            # ------------------------------
-            bundle = teacher.export_semantic_bundle(max_keys=1)
-            if not bundle:
-                continue
-
-            word = bundle["tokens"][0]
-            expected_vec = bundle["vecs"][word]
-
-            # teacher performs a teaching attempt
-            teach_reward, teach_penalty, sim = teacher.teach_student(
-                student, word, current_gen=self.generation_index
-            )
-
-            # student evaluates understanding
-            eval_reward = student.evaluate_teaching(
-                teacher.id, word, expected_vec
-            )
-
-            # teacher receives reinforcement from student's evaluation
-            teacher.apply_teaching_reward(student.id, eval_reward)
-
-            # --- world log (diagnostic) ---
-            try:
-                self.world.append_text(
-                    "/notes.txt",
-                    f"[TeachPhase] A{teacher.id}->{student.id} "
-                    f"trust={teacher.teaching_willingness(student.id):.2f} "
-                    f"word={word} sim={sim:.2f} "
-                    f"teachR={teach_reward:.2f} evalR={eval_reward:.2f}\n"
-                )
-            except Exception:
-                pass
 
     # -----------------------------
     # Fitness pipeline
@@ -1175,105 +542,6 @@ class Coordinator:
 
         return [chooser, p2, p3]
 
-    # -----------------------------
-    # Child creation (with learning inheritance)
-    # -----------------------------
-    # def make_child(self, p1, p2, p3, new_id):
-    #     """
-    #     Tri-parent child with:
-    #     - damped + noisy trait inheritance
-    #     - program mutation based on a random parent's program
-    #     - cultural inheritance of utterance associations + symbol drift
-    #     - fresh social memory (to avoid runaway cliques), but you can
-    #       carry a tiny seed if desired (kept empty here for robustness)
-    #     """
-    #     child = Agent(new_id)
-
-    #     # 1) Traits (pull toward neutral + noise)
-    #     for key in child.traits:
-    #         inherited = random.choice([p1.traits[key], p2.traits[key], p3.traits[key]])
-    #         inherited = self.damp_trait(inherited, strength=0.08)
-    #         inherited += random.uniform(-0.02, 0.02)
-    #         child.traits[key] = self._clamp(inherited, 0.0, 1.0)
-
-    #     # memory traits
-    #     child.memory_influence = random.choice([p1.memory_influence, p2.memory_influence, p3.memory_influence])
-    #     child.memory_decay_rate = self._clamp(
-    #         random.choice([p1.memory_decay_rate, p2.memory_decay_rate, p3.memory_decay_rate]) + random.uniform(-0.02, 0.02),
-    #         0.0, 1.0
-    #     )
-
-    #     # 2) Program + counting system inheritance 🌱
-    #     # Pick one parent for genetic & cultural inheritance
-    #     chosen_parent = random.choice([p1, p2, p3])
-    #     parent_prog = chosen_parent.program
-    #     child.mutate(parent_prog, parent_agent=chosen_parent)
-
-    #     # 3) Cultural inheritance: language learning
-    #     #    - associations: blended & decayed
-    #     #    - symbol drift: blended & decayed
-    #     child.utterance_memory["associations"] = self._blend_assoc(p1, p2, p3, noise=0.03, decay=0.90)
-    #     # usage_count starts fresh (prevents ancient dominance)
-    #     child.utterance_memory["usage_count"].clear()
-
-    #     child.symbol_drift = self._blend_symbol_drift(p1, p2, p3, noise=0.03, decay=0.95)
-
-    #     # 4) Social memory starts clean (keeps dynamics healthy)
-    #     child.social_memory.clear()
-    #     child.lineage_score = 0.0
-
-    #     # scalar memory channels reset
-    #     child.memory["last_fitness"] = 0.0
-    #     child.memory["last_fitness_change"] = 0.0
-    #     child.memory["cooperation_success"] = 0.0
-    #     child.memory["novelty_success"] = 0.0
-
-    #     # Energy: newborn starts slightly below max
-    #     child.energy = ENERGY_MAX * 0.75
-
-    #     # 5) Numeric-symbol & counting system inheritance 🌱
-    #     parent_maps = [getattr(p, "symbol_map", {}) for p in (p1, p2, p3) if hasattr(p, "symbol_map")]
-    #     child.symbol_map = {}
-
-    #     # Ensure counting system sees the same mapping as the agent
-    #     if hasattr(child, "counting") and hasattr(child, "symbol_map"):
-    #         try:
-    #             child.counting.set_symbol_map(child.symbol_map)
-    #         except Exception:
-    #             pass
-
-    #     # Merge all parent mappings (last parent wins if conflict)
-    #     for m in parent_maps:
-    #         if not m:
-    #             continue
-    #         for k, v in m.items():
-    #             child.symbol_map[k] = v
-
-    #     # If none of the parents had a map, initialise a fresh one
-    #     if not child.symbol_map:
-    #         cs = CountingSystem()
-    #         child.symbol_map = {i: cs.get_symbol(i) for i in range(cs.base)}
-    #         child.counting = cs
-    #     else:
-    #         # If at least one parent had a system, merge their counting bases
-    #         parent_systems = [getattr(p, "counting", None) for p in (p1, p2, p3) if hasattr(p, "counting")]
-    #         if parent_systems:
-    #             cs = CountingSystem()
-    #             cs.merge_from(*[s for s in parent_systems if s])
-    #             child.counting = cs
-    #         else:
-    #             # fallback if maps exist but no counting obj
-    #             child.counting = CountingSystem()
-
-    #     # Ensure numeric symbol map initialized cleanly
-    #     if not hasattr(child, "symbol_map"):
-    #         child.symbol_map = {}
-
-    #     # Always initialise history
-    #     child.symbol_map_history = {}
-
-    #     return child
-
     def make_child(self, p1, p2, p3, new_id):
         """
         Tri-parent child creation with full semantic, linguistic, numeric,
@@ -1296,7 +564,7 @@ class Coordinator:
             - identity token 'a{new_id}' correctly grounded
         """
 
-        child = Agent(new_id)
+        child = Agent(id = new_id, token_registry=self.token_registry)
 
         # ---------------------------------------------------
         # 1) TRAITS
@@ -1392,24 +660,80 @@ class Coordinator:
         # First: normalise any weird existing rows in child's links
         for a, nbrs in list(lsem.items()):
             if not isinstance(nbrs, defaultdict):
-                lsem[a] = defaultdict(float, nbrs)
+                lsem[a] = defaultdict(lambda: 0.0, nbrs)
+
+        def _extract_weight(entry):
+            """Handle both float and dict-style link entries."""
+            if isinstance(entry, dict):
+                return float(entry.get("w", 0.0))
+            return float(entry)
+
+        def _merge_link_entry(existing, incoming_weight, incoming_entry=None):
+            """
+            Merge an existing link value with an incoming one.
+
+            existing: float or dict or None
+            incoming_weight: float (already extracted)
+            incoming_entry: dict or None (original incoming link)
+            """
+            base_w = 0.0
+            if existing is not None:
+                if isinstance(existing, dict):
+                    base_w = float(existing.get("w", 0.0))
+                else:
+                    base_w = float(existing)
+
+            new_w = base_w + incoming_weight * (1.0 / 3.0)
+
+            # If either side is dict-style, return a dict-style entry
+            if isinstance(existing, dict) or isinstance(incoming_entry, dict):
+                out = existing.copy() if isinstance(existing, dict) else {}
+                # merge usefulness if present
+                uses = []
+                if isinstance(existing, dict) and "use" in existing:
+                    uses.append(existing["use"])
+                if isinstance(incoming_entry, dict) and "use" in incoming_entry:
+                    uses.append(incoming_entry["use"])
+                if uses:
+                    out["use"] = sum(uses) / len(uses)
+
+                # age: child starts "young" – we can reset or lightly blend
+                if isinstance(existing, dict) and "age" in existing:
+                    out["age"] = max(0, int(existing["age"]))
+                else:
+                    out["age"] = 0
+
+                out["w"] = new_w
+                return out
+
+            # plain float mode
+            return new_w
 
         # Then: merge parent link graphs
         for plinks in parent_links:
             for a, nbrs in plinks.items():
-                # Ensure row is a defaultdict(float)
+                # Ensure row is a defaultdict
                 row = lsem.get(a)
                 if row is None or not isinstance(row, defaultdict):
-                    row = lsem[a] = defaultdict(float, row or {})
-                # Accumulate weights safely (no KeyError even if row is plain dict)
-                for b, w in nbrs.items():
-                    row[b] = row.get(b, 0.0) + (w * (1.0 / 3.0))
+                    row = lsem[a] = defaultdict(lambda: 0.0, row or {})
 
-        # prune tiny edges
+                for b, entry in nbrs.items():
+                    # extract numeric weight from parent entry
+                    incoming_w = _extract_weight(entry)
+                    existing = row.get(b)
+                    row[b] = _merge_link_entry(existing, incoming_w, entry)
+
+        # prune tiny edges (supports float + dict)
         for a, nbrs in list(lsem.items()):
-            for b, w in list(nbrs.items()):
+            for b, entry in list(nbrs.items()):
+                if isinstance(entry, dict):
+                    w = float(entry.get("w", 0.0))
+                else:
+                    w = float(entry)
+
                 if abs(w) < 1e-6:
                     del nbrs[b]
+
             if not nbrs:
                 del lsem[a]
 
@@ -1432,8 +756,21 @@ class Coordinator:
             except Exception:
                 pass
 
-        child.semantic["families"] = merged_families
+        child.semantic.setdefault("families", {})
+        if isinstance(child.semantic["families"], dict):
+            child.semantic["families"].clear()
+            child.semantic["families"].update(merged_families)
+        else:
+            child.semantic["families"] = dict(merged_families)
+
         child.semantic["family_counter"] = (max(fam_ids) + 1) if fam_ids else 1
+        if hasattr(child, "semantic_system") and hasattr(child.semantic_system, "family_system"):
+            child.semantic_system.family_system.families = child.semantic["families"]
+            child.semantic_system.families = child.semantic["families"]
+            try:
+                child.semantic_system.family_system.family_counter = int(child.semantic["family_counter"])
+            except Exception:
+                pass
 
         # ---------------------------------------------------
         # 5) LINGUISTIC MEMORY / ASSOCIATIONS
@@ -1453,8 +790,9 @@ class Coordinator:
             for k, v in m.items():
                 child.symbol_map[k] = v
 
-        cs = CountingSystem()
+        cs = NumericSystem(owner=child)
         cs.merge_from(p1.counting, p2.counting, p3.counting)
+        child.numeric_system = cs
         child.counting = cs
         child.counting.set_symbol_map(child.symbol_map)
 
@@ -1482,8 +820,11 @@ class Coordinator:
         # 10) IDENTITY — FINAL STEP
         # ---------------------------------------------------
         child.name_token = f"a{new_id}"
-        child.identity_tokens.add(child.name_token)
-        child.mark_identity_token(child.name_token)
+        if hasattr(child, "identity_system"):
+            child.identity_system.mark_identity_token(child.name_token)
+        else:
+            child.identity_tokens.add(child.name_token)
+            child.mark_identity_token(child.name_token)
 
         return child
 
@@ -1493,75 +834,6 @@ class Coordinator:
             for key, val in a.memory.items():
                 if isinstance(val, (int, float)):
                     a.memory[key] = val * decay
-
-    # -----------------------------
-    # Language Phase (Challenge semantics integrated)
-    # -----------------------------
-    def run_language_phase(self):
-        self.last_utterances = {}
-
-        seeds = self.semantic_seeds
-        words = self.cached_dictionary_words
-
-        # 0) New challenge setup (as you had)
-
-        for a in self.agents:
-            a.challenge_guess = random.randint(0, 4)
-            a.challenge_system = self.challenge
-
-        self.challenge.new_challenge()
-        self.challenge.assign_liars(self.agents)
-
-        # 1) Each agent emits one utterance we can actually *see* this gen.
-        #    (We also push it to shared notes via each agent's own API.)
-        for a in self.agents:
-            try:
-                utt = a.produce_utterance()
-                self.last_utterances[a.id] = utt
-                if a.id in self.agent_apis:
-                    self.agent_apis[a.id].append_text("/notes.txt", f"A{a.id}: {utt}\n", scope="world")
-            except Exception:
-                pass
-
-        # --- Communication feedback loop ---
-        ids = list(self.last_utterances.keys())
-        for _ in range(len(ids)):
-            if len(ids) < 2:
-                break
-            speaker_id, listener_id = random.sample(ids, 2)
-            speaker = next(a for a in self.agents if a.id == speaker_id)
-            listener = next(a for a in self.agents if a.id == listener_id)
-            utt = self.last_utterances[speaker_id]
-            self.communicate(speaker, listener, utt)
-
-        # 2) Light world-ingest (as you had; safe-guarded)
-        for a in self.agents:
-            try:
-                a.language_world_ingest_step()
-            except Exception:
-                pass
-
-        # 3) Build dictionary-derived vocabulary and inject
-
-        # 4) FIRST semantic teaching pass
-        self.semantic_teaching_phase()
-
-        # 5) Gossip
-        self.gossip_exchange()
-
-        # 6) SECOND semantic teaching pass (consolidation)
-        self.semantic_teaching_phase()
-
-        # 7) Listening & semantic reward (keep your existing logic, but ensure
-        #    it uses self.last_utterances, which we now populate above)
-        def jaccard(a_tokens, b_tokens):
-            A, B = set(a_tokens), set(b_tokens)
-            if not A or not B: return 0.0
-            return len(A & B) / len(A | B)
-
-        # Base reward from final fitness is applied later in language_feedback().
-        # Here we can optionally do a small referential nudge, or keep it simple.
-        # (We’ll keep it simple here and let language_feedback() do the heavy lift.)
 
     # -----------------------------
     # Generation loop
@@ -1610,26 +882,12 @@ class Coordinator:
             agent.challenge_guess = self.challenge.expectation_to_guess(
                 agent.get_overall_expectation()
             )
-            agent.last_utterance = agent.speak_number(agent.challenge_guess)
+            agent.last_utterance = agent.numeric_system.speak_number(agent.challenge_guess)
 
         self.ledger.reset_gen()
 
         # language phase
         self.run_language_phase()
-
-        # -------------------------------------------------------
-        # HELP ANSWERING (ONCE EARLY IN GEN)
-        # -------------------------------------------------------
-        for a in self.agents:
-            if hasattr(a, "maybe_answer_numeric_help"):
-                a.maybe_answer_numeric_help()
-
-        # -------------------------------------------------------
-        # TEACHING INGESTION
-        # -------------------------------------------------------
-        for a in self.agents:
-            if hasattr(a, "process_numeric_teaching"):
-                a.process_numeric_teaching()
 
         # -------------------------------------------------------
         # ARCHETYPE CLASSIFICATION (needed for homeostasis)
@@ -1649,52 +907,31 @@ class Coordinator:
 
         # Agents attempt tasks
         for ag in self.agents:
-            ag.try_solve_tasks(self.active_tasks, self.generation_index)
+            if hasattr(ag, "task_system_v2"):
+                ag.task_system_v2.try_solve_tasks(self.active_tasks, self.generation_index)
 
         # -------------------------------------------------------
-        # TASK SOLVING
+        # TASK SOLVING (legacy fallback)
         # -------------------------------------------------------
         # if hasattr(self, "active_tasks") and self.active_tasks:
         #     for a in self.agents:
-        #         if hasattr(a, "try_solve_tasks"):
-        #             a.try_solve_tasks(self.active_tasks, self.generation_index)
+        #         if hasattr(a, "task_system_v2"):
+        #             a.task_system_v2.try_solve_tasks(self.active_tasks, self.generation_index)
 
-        # === POST-TASK EVALUATION HOOKS ===
+        # -------------------------------------------------------
+        # POST-TASK EVALUATION
+        # -------------------------------------------------------
+
         for task in self.active_tasks:
-            if task.get("task_type") == "pref_align":
-                # gather responses from agents
-                responses = task.get("responses", [])
+            self.score_task(task)
 
-                # we expect exactly 2 entries
-                if len(responses) == 2:
-                    r1, r2 = responses[0], responses[1]
-
-                    # ensure they picked something
-                    if "choice" in r1 and "choice" in r2:
-                        # check agreement
-                        if r1["choice"] == r2["choice"]:
-                            # agreed → fitness and trust reward
-                            a_id = int(r1["agent_id"][1:])
-                            b_id = int(r2["agent_id"][1:])
-
-                            a = self.agent_by_id(a_id)
-                            b = self.agent_by_id(b_id)
-
-                            if a and b:
-                                a.own_fitness += 0.2
-                                b.own_fitness += 0.2
-
-                                if hasattr(a, "adjust_trust"):
-                                    a.adjust_trust(b_id, +0.05, channel=2)
-                                    b.adjust_trust(a_id, +0.05, channel=2)
-
-        # keep short task list
-        if hasattr(self, "active_tasks"):
-            self.active_tasks = self.active_tasks[-3:]
+        # then archive / trim
+        self.completed_tasks.extend(self.active_tasks)
+        self.active_tasks = self.active_tasks[-3:]
 
         # motivated action
         for agent in self.agents:
-            action = agent.decide_action()
+            action = agent.decision_system.decide_action()
             success = orchestrate_action(agent, action, self)
             agent.last_action = action
             agent.last_action_success = success
@@ -1799,8 +1036,8 @@ class Coordinator:
 
         # === NUMERIC DISTINCTION REWARD ===
         for agent in self.agents:
-            mapping = agent.numeric_semantic
-            collisions = agent._numeric_collision_score()
+            mapping = agent.numeric_system.numeric_semantic
+            collisions = agent.numeric_system._numeric_collision_score()
 
             # reward clarity
             if collisions == 0:
@@ -1822,7 +1059,7 @@ class Coordinator:
             # --- rel-family drift ---
             rel_fam = a.semantic.get("rel_family", {})
             if rel_fam:
-                rel_centroid = a._centroid([i["vec"] for i in rel_fam.values()])
+                rel_centroid = a.semantic_system._centroid([i["vec"] for i in rel_fam.values()])
                 if rel_centroid is not None:
                     for tok, info in rel_fam.items():
                         info["age"] += 1
@@ -1835,7 +1072,7 @@ class Coordinator:
             # --- NEW: ref-family drift ---
             ref_fam = a.semantic.get("ref_family", {})
             if ref_fam:
-                ref_centroid = a._centroid([i["vec"] for i in ref_fam.values()])
+                ref_centroid = a.semantic_system._centroid([i["vec"] for i in ref_fam.values()])
                 if ref_centroid is not None:
                     # slightly weaker pull than rel, to keep “about” tokens a bit looser
                     for tok, info in ref_fam.items():
@@ -1975,560 +1212,43 @@ class Coordinator:
         for a in self.agents:
             # every 5 generations
             if self.generation_index % 5 == 0:
-                if hasattr(a, "detect_semantic_families"):
-                    a.detect_semantic_families()
-                a.prune_families()
+                if hasattr(a, "semantic_system") and hasattr(a.semantic_system, "family_system"):
+                    a.semantic_system.family_system.detect_semantic_families()
+                    a.semantic_system.family_system.prune_families()
+                else:
+                    if hasattr(a, "detect_semantic_families"):
+                        a.detect_semantic_families()
+                    a.prune_families()
 
-            if self.generation_index % 100 == 0:
+            if self.generation_index % 50 == 0:
                 a.debug_dump_semantics()
 
             # each generation
             a.semantic_drift_update()
-            a._sanitize_vector_dims()
-            if hasattr(a, "family_reinforcement_update"):
-                a.family_reinforcement_update()
-            a.family_soft_decay()
+            a.semantic_system._sanitize_vector_dims()
+            if hasattr(a, "semantic_system") and hasattr(a.semantic_system, "family_system"):
+                a.semantic_system.family_system.family_reinforcement_update()
+                a.semantic_system.family_system.family_soft_decay()
+            else:
+                if hasattr(a, "family_reinforcement_update"):
+                    a.family_reinforcement_update()
+                a.family_soft_decay()
             # --- Update community semantic centroid ---
 
         # --- Community Semantics ---
         self.print_community_semantic_stats()
 
         for a in self.agents:
-            if hasattr(a, "detect_semantic_gaps"):
-                a.detect_semantic_gaps(self.community_semantic)
-            if hasattr(a, "apply_flavour_homeostasis"):
-                a.apply_flavour_homeostasis(self.community_semantic)
+            a.epistemic_system.detect_semantic_gaps(self.community_semantic)
+            a.epistemic_system.apply_flavour_homeostasis(self.community_semantic)
 
         self.print_semantic_gap_stats()
         self.semantic_alignment_tasks = []
 
-        print(self.summarize_dialogues(last_n=50))
+        if hasattr(self, "summarize_dialogues"):
+            print(self.summarize_dialogues(last_n=50))
 
         print(f"Generation {self.generation_index} running...")
-
-    # =======================================================
-    # TASKS & CHALLENGE UPDATES
-    # ======================================================
-
-    def _generate_task_id(self):
-        tid = f"T{self.next_task_id:04d}"
-        self.next_task_id += 1
-        return tid
-
-    def load_tasks(self, filename="/tasks.json"):
-        """Load tasks from a shared JSON file inside the sandbox."""
-        try:
-            raw = self.world.read_json(filename)
-            if not raw:
-                return []
-            if isinstance(raw, dict):
-                return [raw]
-            if isinstance(raw, list):
-                return raw
-            return []
-        except Exception as e:
-            print("TASK LOAD ERROR:", e)
-            return []
-
-    def generate_describe_concept_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        # Pick a token to be described.
-        # Prefer tokens with vectors, else random fallback.
-        all_tokens = list(getattr(ag.semantic, "vecs", {}).keys())
-        if not all_tokens:
-            target = "su"
-        else:
-            target = random.choice(all_tokens)
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "describe_concept",
-            "assigned_agents": [ag.id],
-            "data": {"target_token": target},
-            "responses": {}
-        }
-
-    def generate_narrative_chain_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        # Choose a start token
-        toks = list(getattr(ag.semantic, "vecs", {}).keys())
-        start = random.choice(toks) if toks else "su"
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "narrative_chain",
-            "assigned_agents": [ag.id],
-            "data": {"start": start},
-            "responses": {}
-        }
-
-    def generate_prediction_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        # produce a random prefix from the agent
-        try:
-            prefix = ag.produce_utterance()
-        except Exception:
-            prefix = "su tol"
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "prediction_task",
-            "assigned_agents": [ag.id],
-            "data": {"prefix": prefix},
-            "responses": {}
-        }
-
-    def generate_similarity_debate_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        # grab three candidate tokens
-        vecs = getattr(ag.semantic, "vecs", {})
-        toks = list(vecs.keys())
-
-        if len(toks) < 3:
-            toks = ["su", "tol", "muk"]
-
-        A, B, C = random.sample(toks, 3) if len(toks) >= 3 else ("su", "tol", "muk")
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "similarity_debate",
-            "assigned_agents": [ag.id],
-            "data": {"A": A, "B": B, "C": C},
-            "responses": {}
-        }
-
-    def generate_role_assignment_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        vecs = getattr(ag.semantic, "vecs", {})
-        events = list(vecs.keys()) or ["muk"]
-        event = random.choice(events)
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "role_assignment",
-            "assigned_agents": [ag.id],
-            "data": {"event": event},
-            "responses": {}
-        }
-
-    def generate_misunderstanding_detection_task(self):
-        if len(self.agents) < 2:
-            return None
-
-        a, b = random.sample(self.agents, 2)
-
-        # Ask agent a to produce something ambiguous
-        try:
-            utt = a.produce_utterance()
-        except Exception:
-            utt = "su tol rin"
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "misunderstanding_detection",
-            "assigned_agents": [b.id],   # b interprets a
-            "data": {
-                "utterance": utt,
-                "partner_id": a.id
-            },
-            "responses": {}
-        }
-
-    def generate_definition_swap_task(self):
-        if len(self.agents) < 2:
-            return None
-
-        a, b = random.sample(self.agents, 2)
-
-        # choose a token to define
-        vecs = getattr(a.semantic, "vecs", {})
-        toks = list(vecs.keys()) or ["su"]
-        tok = random.choice(toks)
-
-        # partner's definition
-        try:
-            partner_def = a.produce_utterance()
-        except Exception:
-            partner_def = tok + " su tol"
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "definition_swap",
-            "assigned_agents": [b.id],
-            "data": {
-                "token": tok,
-                "partner_definition": partner_def
-            },
-            "responses": {}
-        }
-
-    def generate_action_reconstruction_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        vecs = getattr(ag.semantic, "vecs", {})
-        toks = list(vecs.keys()) or ["su", "tol", "muk"]
-
-        if len(toks) < 2:
-            a_tok, b_tok = "su", "tol"
-        else:
-            a_tok, b_tok = random.sample(toks, 2)
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "action_reconstruction",
-            "assigned_agents": [ag.id],
-            "data": {"from": a_tok, "to": b_tok},
-            "responses": {}
-        }
-
-    def generate_property_attribution_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        vecs = getattr(ag.semantic, "vecs", {})
-        toks = list(vecs.keys()) or ["su"]
-        target = random.choice(toks)
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "property_attribution",
-            "assigned_agents": [ag.id],
-            "data": {"target_token": target},
-            "responses": {}
-        }
-
-    def generate_verb_noun_compat_task(self):
-        if not self.agents:
-            return None
-
-        ag = random.choice(self.agents)
-
-        vecs = getattr(ag.semantic, "vecs", {})
-        toks = list(vecs.keys()) or ["muk"]
-        verb = random.choice(toks)
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "verb_noun_compat",
-            "assigned_agents": [ag.id],
-            "data": {"verb_token": verb},
-            "responses": {}
-        }
-
-    def generate_numeric_compare_task(self):
-        """
-        Produces tasks where A and B may be:
-            - single-digit tokens (existing behaviour)
-            - OR multi-token base-N numbers.
-
-        Agents must use the *reference agent's* CountingSystem and
-        symbol map to interpret the sequences.
-        """
-
-        # choose a *reference* agent with stable symbol_map
-        ref = random.choice(self.agents)
-        smap = getattr(ref, "symbol_map", None)
-        if not smap:
-            return None
-
-        base = getattr(ref.counting, "base", 16)
-        max_n = base ** 2 + random.randint(0, base * 4)   # let them see 2-digit numbers
-
-        # two random integers
-        A_val = random.randint(0, max_n)
-        B_val = random.randint(0, max_n)
-
-        # convert each to multi-token numeral using the ref's system
-        A_tokens = ref.speak_number(A_val).split()
-        B_tokens = ref.speak_number(B_val).split()
-
-        A_str = " ".join(A_tokens)
-        B_str = " ".join(B_tokens)
-
-        # precompute ground truth in the *same* system (ref)
-        if A_val > B_val:
-            correct_phrase = A_str
-        elif B_val > A_val:
-            correct_phrase = B_str
-        else:
-            correct_phrase = A_str  # tie → A
-
-        return {
-            "task_id": self._generate_task_id(),
-            "task_type": "compare_numbers",
-            "instruction": {
-                "base": base,
-                "symbol_map": smap,               # 🔴 IMPORTANT LINE
-                "format": "compare",
-                "description": "Which number is larger?"
-            },
-            "data": {
-                "A": A_str,
-                "B": B_str
-            },
-            # 🔎 Optional: include explicit numeric ground truth for logging
-            "ground_truth": {
-                "ref_agent": ref.id,
-                "A_val": A_val,
-                "B_val": B_val,
-                "answer_phrase": correct_phrase
-            },
-            "responses": [],
-        }
-
-    def generate_cooperative_compare_task(self):
-        """
-        Create a cooperative numeric comparison task:
-          - pick a reference agent to define the 'ground truth'
-          - pick two distinct participants to solve it cooperatively
-          - encode A / B using the ref agent's number system
-        """
-        if not self.agents or len(self.agents) < 2:
-            return None
-
-        ref = random.choice(self.agents)
-        # simple: sample two random numbers in [0, base^2)
-        base = getattr(ref.counting, "base", 8)
-        max_val = base * base
-
-        a_val = random.randint(0, max_val - 1)
-        b_val = random.randint(0, max_val - 1)
-        if a_val == b_val:
-            # nudge to avoid constant equality
-            b_val = (b_val + 1) % max_val
-
-        A_tokens = ref.counting.interpret(a_val)   # assuming you have this helper
-        B_tokens = ref.counting.interpret(b_val)
-
-        A_phrase = " ".join(ref.counting.get_symbol(d) for d in A_tokens)
-        B_phrase = " ".join(ref.counting.get_symbol(d) for d in B_tokens)
-
-        # choose two participants
-        participants = random.sample(self.agents, 2)
-        assigned = [participants[0].id, participants[1].id]
-
-        task = {
-            "task_id": self._generate_task_id(),
-            "task_type": "compare_numbers",
-            "performer": agent.id,   # <-- NEW LINE
-            "data": {
-                "A": number_phrase_A,
-                "B": number_phrase_B,
-            },
-        }
-
-        # optional: log for debugging
-        try:
-            line = (
-                f"COOP_TASK {task['task_id']} ref=A{ref.id} "
-                f"agents={assigned} A='{A_phrase}' B='{B_phrase}' "
-                f"a_val={a_val} b_val={b_val}\n"
-            )
-            self.world.append_text("/coop_tasks.txt", line)
-        except Exception:
-            pass
-
-        return task
-
-    def generate_agreement_dialogue_task(self):
-        # pick 2 distinct agents
-        if len(self.agents) < 2:
-            return None
-
-        a, b = random.sample(self.agents, 2)
-        tid = self._generate_task_id()
-
-        # pick two random utterances or numeric tokens as the “topic”
-        # This should be *ambiguous* to encourage negotiation
-        try:
-            u1 = a.produce_utterance()
-            u2 = b.produce_utterance()
-        except Exception:
-            u1, u2 = "su", "tol"   # fallback
-
-        return {
-            "task_id": tid,
-            "task_type": "agreement_dialogue",
-            "topic": f"{u1} || {u2}",
-            "assigned_agents": [a.id, b.id],
-        }
-
-    def generate_explain_partner_tasks(self, rounds=10):
-        tasks = []
-        for _ in range(rounds):
-            a, b = random.sample(self.agents, 2)
-
-            # choose a base task to explain (compare_numbers)
-            base = self.generate_numeric_compare_task()
-            b_answer = b.solve_task(base)
-
-            tasks.append({
-                "task_type": "explain_partner",
-                "task_id": self.new_task_id(),
-                "assigned_agents": [a.id, b.id],
-                "partner_answer": b_answer.get("answer", ""),
-            })
-        return tasks
-
-    def generate_token_compression_tasks(self, rounds=10):
-        tasks = []
-        for _ in range(rounds):
-            ag = random.choice(self.agents)
-            # choose random utterance from logs or fabricate
-            utt = self.sample_random_utterance() or ag.produce_utterance()
-
-            tasks.append({
-                "task_type": "token_compress",
-                "task_id": self.new_task_id(),
-                "assigned_agents": [ag.id],
-                "utterance": utt,
-            })
-        return tasks
-
-    def generate_preference_alignment_tasks(self, rounds=10):
-        tasks = []
-        roots = ["tar", "rin", "muk", "vak", "tol", "bel", "zev", "ka", "lo", "su"]
-
-        for _ in range(rounds):
-            A, B, P = random.sample(roots, 3)
-            a, b = random.sample(self.agents, 2)
-
-            tasks.append({
-                "task_type": "pref_align",
-                "task_id": self.new_task_id(),
-                "assigned_agents": [a.id, b.id],
-                "A": A,
-                "B": B,
-                "pivot": P,
-            })
-        return tasks
-
-    def generate_reconcile_counts_task(self):
-        """
-        Habit-learner / pattern-compression task.
-
-        Two agents receive *different descriptions* of a number.
-        Their goal is to output the SAME normalized value after decoding.
-
-        Pressure:
-        - habit learners: pattern→normal form
-        - cooperators: converge on a shared numeric interpretation
-        - explorers: less rewarded (stabilising force)
-        """
-        if len(self.agents) < 2:
-            return None
-
-        # choose two different participants
-        a, b = random.sample(self.agents, 2)
-
-        # choose reference agent to generate canonical numeric form
-        ref = random.choice(self.agents)
-        base = getattr(ref.counting, "base", 8)
-
-        # draw a value
-        val = random.randint(0, base**2 - 1)
-
-        # each participant gets *its own* encoding of the same number
-        def encode(agent, value):
-            try:
-                toks = agent.speak_number(value).split()
-            except Exception:
-                toks = ref.speak_number(value).split()
-            return " ".join(toks)
-
-        A_view = encode(a, val)
-        B_view = encode(b, val)
-
-        tid = self._generate_task_id()
-
-        return {
-            "task_id": tid,
-            "task_type": "reconcile_counts",
-            "value": val,
-            "views": {
-                a.id: A_view,
-                b.id: B_view,
-            },
-            "assigned_agents": [a.id, b.id],
-            "responses": []
-        }
-    
-    def evaluate_cooperative_task(self, task, responses):
-        # task was created with key "assigned_agents"
-        a_id, b_id = task["assigned_agents"]
-
-        if a_id not in responses or b_id not in responses:
-            return
-
-        ra = responses[a_id]
-        rb = responses[b_id]
-
-        # Agreement score
-        score = 0
-
-        # 1. same relational category
-        if ra["relation"] == rb["relation"]:
-            score += 1.0
-
-        # 2. same chosen answer token(s)
-        if ra["answer"] == rb["answer"]:
-            score += 1.0
-
-        # 3. semantic match of shared tokens
-        if ra.get("shared_token") and rb.get("shared_token"):
-            if ra["shared_token"] == rb["shared_token"]:
-                score += 1.0
-
-        # 4. correct numeric comparison
-        # Use the phrases we stored under "A" and "B"
-        A_full = task["data"]["A"]
-        B_full = task["data"]["B"]
-        valA = self.agents[a_id]._decode_number_phrase(A_full)
-        valB = self.agents[b_id]._decode_number_phrase(B_full)
-
-        correct_rel = (
-            REL_GT if valA > valB else
-            REL_LT if valB > valA else
-            REL_EQ
-        )
-
-        if ra["relation"] == correct_rel:
-            score += 0.5
-        if rb["relation"] == correct_rel:
-            score += 0.5
-
-        # 5. reward trust between partners
-        self.agents[a_id].adjust_trust(b_id, +0.05 * score, channel=3)
-        self.agents[b_id].adjust_trust(a_id, +0.05 * score, channel=3)
-
-        # 6. reward cooperation fitness
-        self.agents[a_id].cooperation_bonus += score
-        self.agents[b_id].cooperation_bonus += score
 
     # =======================================================
     # COMMUNITY SEMANTIC MAP
@@ -2934,126 +1654,3 @@ class Coordinator:
                 c_conf.pop(tok, None)
 
         com["last_update_gen"] = self.generation_index
-
-    # =====================================================
-    # EMERGENT DIALOGUE ARENA
-    # =====================================================
-
-    def run_dialogues(self, max_pairs_per_gen=30, max_turns_per_pair=2):
-        """
-        Let agents initiate pairwise dialogues based on their own choices.
-
-        - Agents decide *if* they want to talk and *whom* to talk to.
-        - Chatrooms are keyed by unordered pairs (a,b).
-        - Each chatroom gets a few alternating turns.
-        """
-      # PERF(f"== Begin dialogues gen {getattr(self, 'generation_index', '?')} ==")
-        if not hasattr(self, "dialogue_log"):
-            self.dialogue_log = []  # persistent over generations if you like
-
-      # PERF("Collecting partner proposals…")
-        # 1) Agents propose partners
-        proposed_pairs = set()
-        for agent in self.agents:
-            partner_id = agent.choose_conversation_partner(self.agents)
-            if partner_id is None:
-                continue
-
-            key = tuple(sorted((agent.id, partner_id)))
-            proposed_pairs.add(key)
-
-        if not proposed_pairs:
-            return
-
-        # Limit total chatrooms per generation to avoid explosion
-        proposed_list = list(proposed_pairs)
-        random.shuffle(proposed_list)
-        chosen_pairs = proposed_list[:max_pairs_per_gen]
-
-        # index agents by id for quick lookup
-        id_to_agent = {a.id: a for a in self.agents}
-
-      # PERF(f"Total proposed_pairs={len(proposed_pairs)}")
-
-        # 2) Run dialogues
-        for a_id, b_id in chosen_pairs:
-          # PERF(f"Starting room {a_id}-{b_id}")
-            a = id_to_agent.get(a_id)
-            b = id_to_agent.get(b_id)
-            if a is None or b is None:
-                continue
-
-            room_turns = []
-            last_utter = None
-            last_speaker_id = None
-
-            # Alternate speaker turns
-            speaker_order = [a, b] * max_turns_per_pair
-
-            for speaker in speaker_order:
-                listener = b if speaker is a else a
-
-                # Listener receives last message (if from the other side)
-                if last_utter is not None and last_speaker_id != listener.id:
-                    try:
-                        listener.receive_message(last_speaker_id, last_utter)
-                    except Exception:
-                        pass
-
-                # Speaker produces a new utterance (with possible nickname address)
-                try:
-                    if hasattr(speaker, "produce_addressed_utterance"):
-                        utter = speaker.produce_addressed_utterance(listener)
-                    else:
-                        utter = speaker.produce_utterance()
-                except Exception:
-                    utter = None
-
-                if not utter:
-                    # still record a "quiet" turn if you like
-                    utter = ""
-
-                speaker.mark_spoken_turn()
-                last_utter = utter
-                last_speaker_id = speaker.id
-
-                room_turns.append({
-                    "speaker_id": speaker.id,
-                    "listener_id": listener.id,
-                    "utterance": utter,
-                })
-
-            # 3) Log the conversation for diagnostics
-            self.dialogue_log.append({
-                "generation": getattr(self, "generation_index", None),
-                "pair": (a_id, b_id),
-                "turns": room_turns[-10:],  # keep last few
-            })
-
-        # Optional: keep dialogue log from growing forever
-        if len(self.dialogue_log) > 5000:
-            self.dialogue_log = self.dialogue_log[-5000:]
-
-        with open("dialogue_log.txt", "a") as f:
-            for d in self.dialogue_log[-5:]:
-                f.write(f"Gen {d['generation']} Pair {d['pair']}\n")
-                for t in d["turns"]:
-                    f.write(f"  A{t['speaker_id']} → A{t['listener_id']}: {t['utterance']}\n")
-                f.write("\n")
-
-    def summarize_dialogues(self, last_n=100):
-        if not hasattr(self, "dialogue_log") or not self.dialogue_log:
-            return "No dialogues yet."
-
-        recent = self.dialogue_log[-last_n:]
-        pairs = {}
-        for rec in recent:
-            key = tuple(sorted(rec["pair"]))
-            pairs.setdefault(key, 0)
-            pairs[key] += len(rec["turns"])
-
-        lines = [f"Recent dialogue pairs (last {last_n} records):"]
-        for (a, b), count in sorted(pairs.items(), key=lambda x: -x[1])[:15]:
-            lines.append(f"  A{a}–A{b}: {count} turns")
-
-        return "\n".join(lines)

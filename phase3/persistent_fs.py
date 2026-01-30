@@ -1,5 +1,9 @@
 import os, json
-from PIL import Image
+
+try:
+    from PIL import Image  # type: ignore
+except Exception:
+    Image = None
 
 class PersistentFS:
     """
@@ -14,6 +18,9 @@ class PersistentFS:
     def __init__(self, root):
         self.root = os.path.abspath(root)
         os.makedirs(self.root, exist_ok=True)
+        self.canvas_w = 0
+        self.canvas_h = 0
+        self.canvas = None
 
     # ------------------------
     # Path safety
@@ -27,6 +34,12 @@ class PersistentFS:
         if not full.startswith(self.root):
             raise PermissionError("Illegal path escape attempt.")
         return full
+
+    def make_dirs(self, path):
+        if not path or path in ("/", ""):
+            return
+        full = self._resolve(path)
+        os.makedirs(full, exist_ok=True)
 
     # ------------------------
     # Path listing (critical)
@@ -70,7 +83,6 @@ class PersistentFS:
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
             f.write(str(text))
-        print("WRITE (OVERWRITE):", path, "TEXT:", text[:50])
 
     def append_text(self, path, text):
         full = self._resolve(path)
@@ -97,7 +109,21 @@ class PersistentFS:
     # ------------------------
     # Canvas
     # ------------------------
+    def draw_pixel(self, x, y, rgb):
+        if self.canvas is None or self.canvas_w <= 0 or self.canvas_h <= 0:
+            self.create_canvas(32, 32)
+        if not (0 <= x < self.canvas_w and 0 <= y < self.canvas_h):
+            return
+        r, g, b = rgb
+        self.canvas[y][x] = (
+            max(0, min(255, int(r))),
+            max(0, min(255, int(g))),
+            max(0, min(255, int(b))),
+        )
+
     def save_canvas(self, path, pixel_grid):
+        if Image is None:
+            return
         full = self._resolve(path)
         os.makedirs(os.path.dirname(full), exist_ok=True)
         h = len(pixel_grid)
@@ -110,4 +136,7 @@ class PersistentFS:
         img.save(full)
 
     def create_canvas(self, width, height):
-        return [[(255,255,255) for _ in range(width)] for _ in range(height)]
+        self.canvas_w = int(width)
+        self.canvas_h = int(height)
+        self.canvas = [[(255, 255, 255) for _ in range(self.canvas_w)] for _ in range(self.canvas_h)]
+        return self.canvas

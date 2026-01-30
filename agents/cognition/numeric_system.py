@@ -1,21 +1,58 @@
+"""
+agents/cognition/numeric_system.py
+Numeric system for managing agent numeric representations.
+"""
 import random
+from typing import Optional
 
-class CountingSystem:
+POSSIBLE_BASES = [4, 6, 8, 10, 12, 16]
+class NumericSystem:
     """
-    Layer-3: internal number cognition.
-    Agents can drift between bases (2–16) and evolve symbolic number grammars.
+    Manages the numeric representations of an agent.
     """
-
-    POSSIBLE_BASES = [4, 6, 8, 10, 12, 16]
-
-    def __init__(self, *args, **kwargs):
-        self.owner = None
-        self.base = random.choice(self.POSSIBLE_BASES)
-        self.symbols = {}       # number (int) → token (str)
-        self.inverse = {}       # token (str) → number (int)
+    def __init__(self, owner):
+        self.owner = owner
+        self.base = random.choice(POSSIBLE_BASES)
+        self.symbols = {}
+        self.inverse = {}
         self._init_seed_symbols()
         self.symbol_map = {}
         self.inverse_symbol_map = {}
+        
+        # Numeric semantic mapping: digit -> token (keep in sync with symbols).
+        self.numeric_semantic = self.symbols
+        for d in range(self.base):
+            tok = self.get_symbol(d)
+            self.numeric_semantic[d] = tok
+            self._register_numeric_token(tok, digit=d)
+
+    def _numeric_collision_score(self):
+        mapping = self.numeric_semantic
+        tokens = list(mapping.values())
+        unique = set(tokens)
+        return max(0, len(tokens) - len(unique))
+
+    def _register_numeric_token(self, tok: str, digit: Optional[int] = None):
+        if not isinstance(tok, str) or not tok.strip():
+            return
+        tok = tok.strip().lower()
+
+        o = self.owner
+        if hasattr(o, "vocab") and isinstance(getattr(o, "vocab", None), set):
+            o.vocab.add(tok)
+
+        reg = getattr(o, "token_registry", None)
+        if reg is not None and hasattr(reg, "register_numeric"):
+            try:
+                reg.register_numeric(tok)
+            except Exception:
+                pass
+
+        if hasattr(o, "semantic_system"):
+            try:
+                o.semantic_system.ensure_numeric_token(tok, digit=digit, base=self.base)
+            except Exception:
+                pass
 
     def decode_token(self, tok):
         """
@@ -111,6 +148,7 @@ class CountingSystem:
         # Store it: dynamic expansion
         self.symbol_map[new_val] = tok
         self.inverse_symbol_map[tok] = new_val
+        self._register_numeric_token(tok, digit=(new_val % max(2, self.base)))
         return new_val
 
     def set_symbol_map(self, symbol_map):
@@ -129,6 +167,7 @@ class CountingSystem:
             token = random.choice(consonants) + random.choice(vowels)
             self.symbols[n] = token
             self.inverse[token] = n
+            self._register_numeric_token(token, digit=n)
 
     def interpret(self, raw_number):
         """
@@ -165,19 +204,24 @@ class CountingSystem:
             if k not in self.symbols and random.random() < 0.3:
                 self.symbols[k] = v
                 self.inverse[v] = k
+                self._register_numeric_token(v, digit=k)
 
     def mutate(self):
         """
         Randomly perturb base or rename one symbol.
         """
         if random.random() < 0.1:
-            self.base = random.choice(self.POSSIBLE_BASES)
+            self.base = random.choice(POSSIBLE_BASES)
         if random.random() < 0.3 and self.symbols:
             k = random.choice(list(self.symbols.keys()))
             old = self.symbols[k]
-            new = old + random.choice("aeiou")
+            new = f"{old}{random.choice('aeiou')}"
             self.symbols[k] = new
             self.inverse[new] = k
+
+    def mutate_base(self):
+        """Compatibility shim: older code calls `counting.mutate_base()`."""
+        self.base = random.choice(POSSIBLE_BASES)
 
     def get_symbol(self, n: int) -> str:
         """
@@ -193,7 +237,8 @@ class CountingSystem:
             tok = random.choice(consonants) + random.choice(vowels)
             self.symbols[n] = tok
             self.inverse[tok] = n
-
+            self._register_numeric_token(tok, digit=n)
+        
         return tok
 
 
@@ -217,6 +262,7 @@ class CountingSystem:
             if not hasattr(o, "symbols"):
                 continue
             for k, v in o.symbols.items():
+                self._register_numeric_token(v, digit=k)
                 if k not in self.symbols:
                     # occasionally borrow symbol directly
                     if random.random() < 0.5:
@@ -240,5 +286,93 @@ class CountingSystem:
                 token = random.choice(consonants) + random.choice(vowels)
                 self.symbols[n] = token
                 self.inverse[token] = n
+                self._register_numeric_token(token, digit=n)
 
         return self
+    
+    def _maybe_learn_numeric_from(self, teacher):
+        my_score = self._numeric_collision_score()
+        their_score = teacher.numeric_system._numeric_collision_score()
+        if their_score < my_score:
+            for n, tok in teacher.numeric_system.numeric_semantic.items():
+                self.numeric_semantic[n] = tok
+                if hasattr(self.owner, "semantic_system"):
+                    self.owner.semantic_system.ensure_numeric_token(tok, digit=n, base=self.base)
+
+            if hasattr(self.owner, "adjust_trust"):
+                self.owner.adjust_trust(teacher.id, amount=0.02, channel=4)  # competence
+            elif hasattr(self.owner, "update_trust_channels"):
+                self.owner.update_trust_channels(teacher.id, reward=0.2)
+
+            motivations = getattr(self.owner, "motivations", None)
+            if not isinstance(motivations, dict):
+                motivations = getattr(self.owner, "needs", None)
+                if isinstance(motivations, dict):
+                    self.owner.motivations = motivations
+                else:
+                    self.owner.motivations = {}
+                motivations = self.owner.motivations
+            motivations["esteem"] = min(1.0, motivations.get("esteem", 0.5) + 0.03)
+
+            if teacher.traits.get("teaching_drive", 0) > 0.4:
+                teacher_motivations = getattr(teacher, "motivations", None)
+                if not isinstance(teacher_motivations, dict):
+                    teacher_motivations = getattr(teacher, "needs", None)
+                    if isinstance(teacher_motivations, dict):
+                        teacher.motivations = teacher_motivations
+                    else:
+                        teacher.motivations = {}
+                    teacher_motivations = teacher.motivations
+                teacher_motivations["esteem"] = min(1.0, teacher_motivations.get("esteem", 0.5) + 0.02)
+
+    def speak_number(self, n):
+        try:
+            digits = self.interpret(n)
+        except Exception:
+            return str(n)
+
+        if not hasattr(self, "symbol_map") or self.symbol_map is None:
+            self.symbol_map = {}
+        else:
+            self.symbol_map = {
+                k: v for k, v in self.symbol_map.items()
+                if isinstance(v, str) and v.strip()
+            }
+
+        tokens = []
+        for d in digits:
+            if d in self.symbol_map:
+                tok = self.symbol_map[d]
+            else:
+                try:
+                    tok = self.get_symbol(d)
+                except Exception:
+                    tok = f"num{d}"
+                self.symbol_map[d] = tok
+
+            if tok is None:
+                continue
+            tok = str(tok).strip()
+            if not tok:
+                continue
+
+            self.owner.vocab.add(tok)
+            self.owner.semantic_system._ensure_vec(tok)
+            self.owner._ensure_token_semantic(tok)
+            self.owner._semantic_tick_token(tok)
+            if hasattr(self.owner, "semantic_system"):
+                self.owner.semantic_system.ensure_numeric_token(tok, digit=d, base=self.base)
+            tokens.append(tok)
+
+        if not tokens:
+            tokens = ["na"]
+
+        clean = [t.lower() for t in tokens]
+        self.owner._observe_language_tokens(clean)
+
+        utter = " ".join(tokens)
+        self.last_written_word = utter
+        self._last_tokens = clean
+        self.owner.last_written_word = utter
+        self.owner._last_tokens = clean
+        return utter
