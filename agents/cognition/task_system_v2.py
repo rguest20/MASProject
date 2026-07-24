@@ -49,6 +49,17 @@ class TaskSystemV2:
         # dialogue bookkeeping
         self.last_dialogue_proposal = None
 
+    def _task_fail(self, task_id):
+        """Record a failed task attempt on the owning agent."""
+        if task_id is not None:
+            self.failed_tasks[task_id] = self.failed_tasks.get(task_id, 0) + 1
+        if hasattr(self, "state"):
+            self.state["frustration"] = min(
+                1.0,
+                self.state.get("frustration", 0.0) + 0.05,
+            )
+        return None
+
     # ------------------------------------------------------
     # ENTRY POINT
     # ------------------------------------------------------
@@ -117,6 +128,12 @@ class TaskSystemV2:
                 resp = self._solve_compare_numbers(task)
             elif ttype == "cooperative_compare_numbers":
                 resp = self._solve_cooperative_compare_numbers(task)
+            elif ttype == "reconcile_counts":
+                resp = self._solve_reconcile_counts(task)
+            elif ttype == "translate_number":
+                resp = self._solve_reconcile_counts(task)
+            elif ttype == "referential_signal":
+                resp = self._solve_referential_signal(task)
             elif ttype == "semantic_alignment":
                 resp = self._solve_semantic_gap(task)
             elif ttype == "agreement_dialogue":
@@ -157,6 +174,12 @@ class TaskSystemV2:
         # record and semantically reinforce justification tokens
         if resp:
             self.solved_tasks[tid] = resp
+            responses = task.get("responses")
+            if not isinstance(responses, list):
+                responses = []
+                task["responses"] = responses
+            if not any(r.get("agent_id") == resp.get("agent_id") for r in responses):
+                responses.append(resp)
             if hasattr(self, "_observe_tokens"):
                 toks = resp.get("justification", "") or resp.get("utterance", "") or ""
                 toks = toks.split()
@@ -553,6 +576,51 @@ class TaskSystemV2:
             return [rev[t] for t in tokens]
         except KeyError:
             return None
+
+    # ------------------------------------------------------
+    # TASK TYPE: reconcile_counts
+    # ------------------------------------------------------
+    def _solve_reconcile_counts(self, task):
+        """Interpret another agent's numeral and report a normalised value."""
+        views = task.get("views", {}) or {}
+        phrase = views.get(self.id, views.get(str(self.id), ""))
+        if not phrase:
+            return self._task_fail(task.get("task_id"))
+
+        value = self._decode_number_phrase(phrase)
+        confidence = 0.85
+        if value is None:
+            confidence = 0.20
+            value = 0
+            for tok in phrase.split():
+                digit = self.numeric_system.decode_token(tok)
+                if digit is None:
+                    return self._task_fail(task.get("task_id"))
+                value = value * self.numeric_system.base + digit
+
+        return {
+            "agent_id": f"A{self.id}",
+            "normalized": value,
+            "utterance": phrase,
+            "confidence": confidence,
+        }
+
+    def _solve_referential_signal(self, task):
+        """Interpret a peer's invented signal using this agent's lexicon."""
+        data = task.get("data", {}) or {}
+        signal = data.get("signal", "")
+        referent = None
+        for known_referent, known_signal in self.referent_lexicon.items():
+            if known_signal == signal:
+                referent = known_referent
+                break
+
+        return {
+            "agent_id": f"A{self.id}",
+            "signal": signal,
+            "referent": referent,
+            "confidence": 0.85 if referent is not None else 0.10,
+        }
 
     # ------------------------------------------------------
     # SEMANTIC ALIGNMENT TASK

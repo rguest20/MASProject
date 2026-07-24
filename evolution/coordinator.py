@@ -2,10 +2,16 @@
 import math
 import random
 import re
+import json
+import secrets
 from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
 import numpy as np
 
 from agents.agent import Agent
+import config as project_config
+import evolution.coordinator_settings as coordinator_settings
 from evolution.challenge import ChallengeSystem
 from agents.cognition.numeric_system import NumericSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
@@ -59,7 +65,24 @@ def PERF(msg):
 
 
 class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
-    def __init__(self):
+    def __init__(self, run_dir=None, seed=None):
+        """Create an isolated, reproducible simulation run.
+
+        Each coordinator owns its reports and sandbox state under a unique
+        directory so a new experiment cannot append to or overwrite an older
+        one.  ``run_dir`` is available for callers that need to choose the
+        destination explicitly; it must not already exist.
+        """
+        self.random_seed = int(seed) if seed is not None else secrets.randbits(64)
+        self.run_dir = self._create_run_dir(run_dir)
+        self.report_path = self.run_dir / "generation_report.txt"
+        self.csv_path = self.run_dir / "cultural_log.csv"
+        self.dialogue_log_path = self.run_dir / "dialogue_log.txt"
+        self._write_run_metadata()
+
+        random.seed(self.random_seed)
+        np.random.seed(self.random_seed % (2 ** 32))
+
         self.semantic_alignment_tasks = []
         self.token_registry = GlobalTokenRegistry()
 
@@ -77,6 +100,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         self.next_task_id = 1
         self.active_tasks = []
+        self.referential_memory = []
 
         self.community_semantic = {
             "vecs": {},          # token -> centroid vector
@@ -86,7 +110,12 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         }
 
         # Build sandbox world + per-agent private FS and APIs
-        spec = SandboxSpec(root="sandbox_root", world_w=64, world_h=64, seed=42)
+        spec = SandboxSpec(
+            root=str(self.run_dir / "sandbox"),
+            world_w=64,
+            world_h=64,
+            seed=self.random_seed % (2 ** 32),
+        )
         world, homes, apis, bus, ledger = build_sandbox(self.agents, spec)
 
         self.world = world
@@ -158,6 +187,61 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
     # -----------------------------
     # Helpers
     # -----------------------------
+    @staticmethod
+    def _config_snapshot(module):
+        """Return serialisable public constants from a configuration module."""
+        return {
+            name: value
+            for name, value in vars(module).items()
+            if name.isupper() and isinstance(value, (str, int, float, bool, type(None)))
+        }
+
+    def _create_run_dir(self, requested_dir):
+        if requested_dir is not None:
+            destination = Path(requested_dir).expanduser().resolve()
+            try:
+                destination.mkdir(parents=True, exist_ok=False)
+            except FileExistsError as exc:
+                raise ValueError(
+                    f"Run directory already exists: {destination}. "
+                    "Choose a new directory to avoid mixing experiment outputs."
+                ) from exc
+            return destination
+
+        runs_root = Path("runs").resolve()
+        runs_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+        prefix = f"{timestamp}_seed-{self.random_seed:016x}"
+
+        for suffix in range(1000):
+            name = prefix if suffix == 0 else f"{prefix}_{suffix}"
+            destination = runs_root / name
+            try:
+                destination.mkdir()
+                return destination
+            except FileExistsError:
+                continue
+
+        raise RuntimeError("Could not allocate a unique directory for this run.")
+
+    def _write_run_metadata(self):
+        metadata = {
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "seed": self.random_seed,
+            "run_directory": str(self.run_dir),
+            "artifacts": {
+                "generation_report": str(self.report_path),
+                "cultural_log": str(self.csv_path),
+                "dialogue_log": str(self.dialogue_log_path),
+                "sandbox": str(self.run_dir / "sandbox"),
+            },
+            "config": self._config_snapshot(project_config),
+            "coordinator_settings": self._config_snapshot(coordinator_settings),
+        }
+        with (self.run_dir / "metadata.json").open("w", encoding="utf-8") as file:
+            json.dump(metadata, file, indent=2, sort_keys=True)
+            file.write("\n")
+
     def enqueue_action(self, agent, action):
         self.action_queue.append((agent, action))
 
@@ -900,6 +984,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # Build a mixed batch of tasks for this generation
         # For example: 4 tasks per generation
+        task_fitness_baseline = {a.id: a.own_fitness for a in self.agents}
         self.active_tasks = self._build_task_batch(
             num_tasks = 4,
             gen = self.generation_index
@@ -916,6 +1001,11 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         for task in self.active_tasks:
             self.score_task(task)
+
+        # Preserve task rewards across the later behavioural-fitness reset.
+        for a in self.agents:
+            delta = a.own_fitness - task_fitness_baseline[a.id]
+            a.task_fitness = max(-2.0, min(5.0, delta))
 
         # then archive / trim
         self.completed_tasks.extend(self.active_tasks)
@@ -944,7 +1034,9 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # recovery dynamics
         for a in self.agents:
-            a.energy = min(100.0, a.energy + 0.2)
+            # A modest baseline recovery lets long-lived agents accumulate
+            # shared language and numeric conventions.
+            a.energy = min(100.0, a.energy + 1.0)
             peer = random.choice(self.agents)
             if peer.id != a.id:
                 a.adjust_trust(peer.id, +0.01, channel=1)
@@ -974,6 +1066,11 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         # PHASE 1 FITNESS (program behaviour)
         # =======================================================
         self.evaluate_agents()
+
+        # evaluate_agents() recomputes own_fitness, so carry task success
+        # forward as an independent selection signal.
+        for a in self.agents:
+            a.own_fitness += getattr(a, "task_fitness", 0.0)
 
         # ✅ ADD OPERATOR-BASED REWARD (selection pressure)
         for a in self.agents:

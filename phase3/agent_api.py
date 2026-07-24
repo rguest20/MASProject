@@ -1,9 +1,12 @@
 # file: agent_api.py (corrected)
 class AgentAPI:
-    COST_READ  = 1.0
-    COST_WRITE = 2.0
-    COST_DRAW  = 3.0
-    COST_MSG   = 1.0
+    # Sandbox I/O is frequent background exploration, not a major survival
+    # event.  Whole-unit costs drained the population in roughly ten turns
+    # before communication or task learning could have an effect.
+    COST_READ  = 0.10
+    COST_WRITE = 0.20
+    COST_DRAW  = 0.30
+    COST_MSG   = 0.10
 
     def __init__(self, agent, world_fs, private_fs, comm_bus, ledger):
         self.agent  = agent

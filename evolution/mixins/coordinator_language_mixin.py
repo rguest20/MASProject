@@ -203,7 +203,10 @@ class CoordinatorLanguageMixin:
                     agent.adjust_trust(pid, amount=-0.005 * abs(reward_signal), channel=4)
 
         for agent in self.agents:
-            agent.energy *= random.uniform(0.96, 0.99)
+            # Keep interaction feedback as a small metabolic friction.  The
+            # former 1–4% per-generation loss overwhelmed all recovery and
+            # repeatedly replaced agents before learned language could persist.
+            agent.energy *= random.uniform(0.998, 1.0)
             agent.energy = min(agent.energy, 100.0)
 
     def communicate(self, speaker, listener, utterance):
@@ -442,7 +445,8 @@ class CoordinatorLanguageMixin:
         if len(self.dialogue_log) > 5000:
             self.dialogue_log = self.dialogue_log[-5000:]
 
-        with open("dialogue_log.txt", "a") as f:
+        dialogue_path = getattr(self, "dialogue_log_path", "dialogue_log.txt")
+        with open(dialogue_path, "a") as f:
             for d in self.dialogue_log[-5:]:
                 f.write(f"Gen {d['generation']} Pair {d['pair']}\n")
                 for t in d["turns"]:

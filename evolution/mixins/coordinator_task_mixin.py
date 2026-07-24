@@ -99,6 +99,8 @@ class CoordinatorTaskMixin:
         w = {
             "compare_numbers": 1.0,
             "reconcile_counts": 1.0,
+            "translate_number": 1.2,
+            "referential_signal": 1.4,
             "agreement_dialogue": 1.0,
             "describe_concept": 0.7,
             "narrative_chain": 0.7,
@@ -539,7 +541,10 @@ class CoordinatorTaskMixin:
         ref = random.choice(self.agents)
         base = getattr(ref.counting, "base", 8)
 
-        val = random.randint(0, base**2 - 1)
+        # Keep this a single digit so feedback can unambiguously ground a
+        # peer's self-invented numeral in the listener's map.
+        shared_base = min(a.counting.base, b.counting.base, base)
+        val = random.randint(0, max(0, shared_base - 1))
 
         def encode(agent, value):
             try:
@@ -557,9 +562,70 @@ class CoordinatorTaskMixin:
             "task_id": tid,
             "task_type": "reconcile_counts",
             "value": val,
-            "views": {a.id: A_view, b.id: B_view},
+            # Each agent receives the other agent's signal rather than its
+            # own encoding, creating genuine translation pressure.
+            "views": {a.id: B_view, b.id: A_view},
+            "signal_sources": {a.id: b.id, b.id: a.id},
             "assigned_agents": [a.id, b.id],
             "responses": []
+        }
+
+    def generate_translate_number_task(self):
+        task = self.generate_reconcile_counts_task()
+        if task:
+            task["task_type"] = "translate_number"
+        return task
+
+    def generate_referential_signal_task(self):
+        """Ask one agent to interpret another agent's invented word."""
+        if len(self.agents) < 2:
+            return None
+
+        by_id = {agent.id: agent for agent in self.agents}
+        memories = [
+            item for item in getattr(self, "referential_memory", [])
+            if item["speaker_id"] in by_id and item["listener_id"] in by_id
+        ]
+
+        # Most trials rehearse a recent signal.  This gives a learned mapping
+        # a fair chance to affect fitness instead of relying on a rare random
+        # re-encounter of the exact same speaker/listener/referent triple.
+        if memories and random.random() < 0.65:
+            item = random.choice(memories[-60:])
+            speaker = by_id[item["speaker_id"]]
+            listener = by_id[item["listener_id"]]
+            referent = item["referent"]
+            signal = item["signal"]
+        else:
+            speaker, listener = random.sample(self.agents, 2)
+            referent = f"r{random.randrange(6)}"
+            lexicon = speaker.referent_lexicon
+            signal = lexicon.get(referent)
+            if not signal:
+                signal = speaker._invent_token(max_syllables=2)
+                lexicon[referent] = signal
+                speaker.vocab.add(signal)
+                speaker.semantic_system.ensure_vec(signal)
+                speaker._ensure_token_semantic(signal)
+
+            self.referential_memory.append({
+                "speaker_id": speaker.id,
+                "listener_id": listener.id,
+                "referent": referent,
+                "signal": signal,
+            })
+            self.referential_memory = self.referential_memory[-120:]
+
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "referential_signal",
+            "assigned_agents": [listener.id],
+            "data": {
+                "speaker_id": speaker.id,
+                "referent": referent,
+                "signal": signal,
+            },
+            "responses": [],
         }
 
     # ------------------------------------------------------
@@ -625,15 +691,12 @@ class CoordinatorTaskMixin:
 
     def score_reconcile_counts(self, task):
         responses = task.get("responses", [])
-        if len(responses) < 2:
+        if not responses:
             return
 
-        values = [r.get("normalized") for r in responses if "normalized" in r]
-        if not values:
-            return
-
-        most_common = max(set(values), key=values.count)
-        agree_frac = values.count(most_common) / len(values)
+        target = task.get("value")
+        sources = task.get("signal_sources", {}) or {}
+        views = task.get("views", {}) or {}
 
         for r in responses:
             aid = int(r["agent_id"][1:])
@@ -641,10 +704,50 @@ class CoordinatorTaskMixin:
             if not ag:
                 continue
 
-            if r.get("normalized") == most_common:
-                ag.own_fitness += 0.15 * agree_frac
+            if r.get("normalized") == target:
+                ag.own_fitness += 0.35
+                source = self.agent_by_id(sources.get(aid, sources.get(str(aid))))
+                if source:
+                    source.own_fitness += 0.15
+                    ag.adjust_trust(source.id, +0.04, channel=4)
             else:
-                ag.own_fitness -= 0.03
+                ag.own_fitness -= 0.05
+                phrase = views.get(aid, views.get(str(aid), ""))
+                if phrase and len(phrase.split()) == 1:
+                    ag.numeric_system.learn_digit_mapping(phrase, target)
+
+    def score_translate_number(self, task):
+        self.score_reconcile_counts(task)
+
+    def score_referential_signal(self, task):
+        responses = task.get("responses", [])
+        data = task.get("data", {}) or {}
+        referent = data.get("referent")
+        signal = data.get("signal")
+        speaker = self.agent_by_id(data.get("speaker_id"))
+
+        for response in responses:
+            try:
+                listener_id = int(response["agent_id"][1:])
+            except (KeyError, TypeError, ValueError):
+                continue
+            listener = self.agent_by_id(listener_id)
+            if listener is None:
+                continue
+
+            if response.get("referent") == referent:
+                listener.own_fitness += 0.45
+                if speaker:
+                    speaker.own_fitness += 0.20
+                    listener.adjust_trust(speaker.id, +0.05, channel=4)
+            else:
+                listener.own_fitness -= 0.05
+                # Grounded correction: retain the peer's signal for the world
+                # referent, making the next encounter interpretable.
+                listener.referent_lexicon[referent] = signal
+                listener.vocab.add(signal)
+                listener.semantic_system.ensure_vec(signal)
+                listener._ensure_token_semantic(signal)
 
     def score_agreement_dialogue(self, task):
         responses = task.get("responses", [])

@@ -37,14 +37,18 @@ class DecisionSystem:
         cooperation = traits.get("cooperation_weight", 0.5)
         expressiveness = traits.get("expressiveness", 0.5)
 
+        # These action names are the public vocabulary accepted by
+        # ``orchestrate_action``.  Keeping the mapping here prevents agents
+        # from paying an energy cost for a decision the environment cannot
+        # execute.
         weights = {
             "idle": 0.1,
-            "read": (0.6 * curiosity_level + 0.4 * curiosity_trait),
-            "attempt_math": (0.7 * curiosity_level + 0.3 * confidence),
-            "attempt_language": (0.6 * expressiveness + 0.4 * curiosity_trait),
+            "attempt_learning": (0.6 * curiosity_level + 0.4 * curiosity_trait),
+            "attempt_math_challenge": (0.7 * curiosity_level + 0.3 * confidence),
+            "attempt_language_challenge": (0.6 * expressiveness + 0.4 * curiosity_trait),
             "seek_social": (0.8 * loneliness + 0.4 * cooperation),
-            "teach_other": (0.6 * teaching_drive + 0.2 * satisfaction + 0.2 * purpose),
-            "reflect_semantic_space": (
+            "attempt_teaching": (0.6 * teaching_drive + 0.2 * satisfaction + 0.2 * purpose),
+            "explore_semantic_space": (
                 0.3 * curiosity + 0.3 * (1.0 - satisfaction) + 0.2 * frustration + 0.2 * purpose
             ),
             "reorganize_concepts": (0.5 * curiosity_trait + 0.5 * (1.0 - satisfaction)),
@@ -52,17 +56,17 @@ class DecisionSystem:
 
         if energy < 20:
             weights["idle"] += 2.0
-            weights["read"] *= 0.4
-            weights["attempt_math"] *= 0.2
-            weights["attempt_language"] *= 0.5
-            weights["teach_other"] *= 0.3
+            weights["attempt_learning"] *= 0.4
+            weights["attempt_math_challenge"] *= 0.2
+            weights["attempt_language_challenge"] *= 0.5
+            weights["attempt_teaching"] *= 0.3
 
         if frustration > 0.7:
             weights["seek_social"] += 0.5
             weights["reorganize_concepts"] += 0.4
 
         if happiness > 0.7 and purpose > 0.6:
-            weights["teach_other"] += 0.5
+            weights["attempt_teaching"] += 0.5
 
         for k in list(weights.keys()):
             if weights[k] < 0.0:
@@ -75,4 +79,3 @@ class DecisionSystem:
         actions = list(weights.keys())
         probs = [w / total for w in weights.values()]
         return random.choices(actions, probs)[0]
-

@@ -21,7 +21,10 @@ def orchestrate_action(agent, action, coordinator):
     # -------------------------
     # Action dispatch
     # -------------------------
-    if action == "seek_social":
+    if action == "idle":
+        success = True
+
+    elif action == "seek_social":
         success = _social_action(agent, coordinator)
 
     elif action == "attempt_learning":
@@ -49,7 +52,8 @@ def orchestrate_action(agent, action, coordinator):
     # -------------------------
     # Energy cost
     # -------------------------
-    agent.energy -= 0.5
+    energy_cost = 0.0 if action == "idle" else 0.5
+    agent.energy -= energy_cost
     if agent.energy < 0:
         agent.energy = 0
 

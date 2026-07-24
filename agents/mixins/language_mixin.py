@@ -21,7 +21,10 @@ class LanguageMixin:
             self.language_system = LanguageSystem(owner=self)
         if hasattr(self, "semantic_system"):
             self.semantic_system.ensure_language_fields()
-        self.language_system.init(seed_tokens=100)
+        # A small private seed leaves room for shared conventions to emerge.
+        # Starting every agent with 100 unique tokens swamped interaction with
+        # idiolect and made mutual interpretation vanishingly unlikely.
+        self.language_system.init(seed_tokens=12)
 
     # =====================================================
     # Bridge helpers

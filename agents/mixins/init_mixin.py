@@ -78,6 +78,15 @@ class InitMixin:
             self.dict_vocab = set()
         if not hasattr(self, "recent_tokens") or not isinstance(self.recent_tokens, list):
             self.recent_tokens = []
+        # Opaque world referents are internal task targets; agents attach their
+        # own invented signals to them through referential tasks.
+        self.referent_lexicon = {}
+
+        # Numeric-symbol maps are agent-owned state.  Initialise them before
+        # NumericSystem so both layers share the same mapping from the start.
+        self.symbol_map = {}
+        self.symbol_map_history = {}
+        self.inverse_symbol_map = {}
 
         # Cognitive systems
         self.semantic_system = SemanticSystem(owner=self)
@@ -90,9 +99,6 @@ class InitMixin:
         # Back-compat: many parts of the codebase refer to `agent.counting`.
         self.counting = self.numeric_system
 
-        self.symbol_map = {}
-        self.symbol_map_history = {}
-        self.inverse_symbol_map = {}
         self.challenge_guess = 0
         self.is_liar = False
         self.numeric_learning_rate = 0.2

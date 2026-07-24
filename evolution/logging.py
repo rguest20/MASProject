@@ -14,9 +14,10 @@ _last_timestamp = None
 
 def _get_log_filenames(coordinator):
     """
-    Returns appropriate log file names based on generation index.
-    Groups generations into blocks (e.g., 0000–0099, 0100–0199, etc.)
-    so multiple generations share the same pair of log files.
+    Return the report and CSV paths owned by this coordinator run.
+
+    Coordinators created before run-directory support retain the old relative
+    paths as a compatibility fallback.
     """
     global _last_block_index, _last_timestamp
 
@@ -28,25 +29,32 @@ def _get_log_filenames(coordinator):
         _last_block_index = block_index
         _last_timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-    # start_block = block_index * LOG_ROTATE_INTERVAL
-    # end_block = start_block + LOG_ROTATE_INTERVAL - 1
-    # base_name = f"{start_block:04d}-{end_block:04d}_{_last_timestamp}"
-    txt_file = "generation_report.txt"
-    csv_file = "cultural_log.csv"
+    txt_file = getattr(coordinator, "report_path", "generation_report.txt")
+    csv_file = getattr(coordinator, "csv_path", "cultural_log.csv")
     return txt_file, csv_file
 
 # -----------------------------
 # Utility: cultural signature
 # -----------------------------
 def compute_cultural_signature(agent):
-    vocab = []
-    # if language organ is attached and has dict_vocab
-    lang = getattr(agent, "language", None)
-    if lang is not None and hasattr(lang, "dict_vocab"):
-        vocab = sorted(list(lang.dict_vocab))[:10]
-
-    raw = f"{getattr(agent.counting, 'base', 10)}-{'-'.join(vocab)}"
+    base = getattr(agent.counting, "base", 10)
+    mapping = getattr(agent, "symbol_map", {}) or {}
+    symbols = [str(mapping.get(d, "?")) for d in range(base)]
+    raw = f"{base}-{'-'.join(symbols)}"
     return hashlib.md5(raw.encode()).hexdigest()[:8]
+
+
+def compute_numeric_alignment(agents):
+    """Mean pairwise agreement over shared digit-to-token mappings."""
+    scores = []
+    for index, left in enumerate(agents):
+        left_map = getattr(left, "symbol_map", {}) or {}
+        for right in agents[index + 1:]:
+            right_map = getattr(right, "symbol_map", {}) or {}
+            shared = set(left_map) & set(right_map)
+            if shared:
+                scores.append(sum(left_map[d] == right_map[d] for d in shared) / len(shared))
+    return sum(scores) / len(scores) if scores else 0.0
 
 
 # -----------------------------
@@ -56,17 +64,13 @@ def compute_generation_summary(coordinator):
     agents = coordinator.agents
     gen = coordinator.generation_index
 
-    aligns = [getattr(a, "cultural_alignment", 0.0) for a in agents]
-    mean_align = sum(aligns) / len(aligns) if aligns else 0.0
-    std_align = statistics.pstdev(aligns) if len(aligns) > 1 else 0.0
-    align_div = len(set(round(x, 2) for x in aligns))
+    mean_align = compute_numeric_alignment(agents)
+    std_align = 0.0
+    align_div = len({compute_cultural_signature(a) for a in agents})
 
     mean_energy = statistics.mean(a.energy for a in agents)
     mean_fitness = statistics.mean(a.total_fitness for a in agents)
-    vocab_mean = statistics.mean(
-        len(getattr(getattr(a, "language", None), "dict_vocab", []))
-        for a in agents
-    )
+    vocab_mean = statistics.mean(len(getattr(a, "vocab", set())) for a in agents)
     bases = [a.counting.base for a in agents if hasattr(a, "counting")]
     base_div = len(set(bases))
 
@@ -107,6 +111,7 @@ def compute_generation_summary(coordinator):
         "alignment_diversity": align_div,
         "mean_energy": mean_energy,
         "mean_fitness": mean_fitness,
+        "mean_task_fitness": statistics.mean(getattr(a, "task_fitness", 0.0) for a in agents),
         "vocab_size_mean": vocab_mean,
         "base_diversity": base_div,
         "cluster_diversity": cluster_div,

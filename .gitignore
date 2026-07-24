@@ -1,5 +1,6 @@
 *.pyc
 sandbox_root/
+runs/
 cultural_log.csv
 dialogue_log.txt
 generation_report.txt

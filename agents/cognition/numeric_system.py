@@ -16,7 +16,12 @@ class NumericSystem:
         self.symbols = {}
         self.inverse = {}
         self._init_seed_symbols()
-        self.symbol_map = {}
+        # The agent owns the map used by task and communication code.  The
+        # numeric system keeps a reference to that same object rather than a
+        # divergent private copy.
+        if not isinstance(getattr(owner, "symbol_map", None), dict):
+            owner.symbol_map = {}
+        self.symbol_map = owner.symbol_map
         self.inverse_symbol_map = {}
         
         # Numeric semantic mapping: digit -> token (keep in sync with symbols).
@@ -142,7 +147,7 @@ class NumericSystem:
         """
         Create a new number for an unseen token.
         """
-        max_val = max(self.symbol_map.keys())
+        max_val = max(self.symbol_map.keys(), default=-1)
         new_val = max_val + 1
 
         # Store it: dynamic expansion
@@ -157,7 +162,31 @@ class NumericSystem:
         token->int map for decoding.
         """
         self.symbol_map = dict(symbol_map or {})
+        self.owner.symbol_map = self.symbol_map
         self.inverse_symbol_map = {v: k for k, v in self.symbol_map.items()}
+
+    def learn_digit_mapping(self, token: str, digit: int):
+        """Ground a peer's one-token numeral in this agent's number system."""
+        if not isinstance(token, str) or not token.strip():
+            return
+        if not isinstance(digit, int) or not (0 <= digit < self.base):
+            return
+
+        token = token.strip().lower()
+        old_token = self.symbol_map.get(digit)
+        old_digit = self.inverse_symbol_map.get(token)
+
+        if old_digit is not None and old_digit != digit:
+            self.symbol_map[old_digit] = old_token
+            if old_token:
+                self.inverse_symbol_map[old_token] = old_digit
+
+        self.symbol_map[digit] = token
+        self.inverse_symbol_map[token] = digit
+        self.symbols[digit] = token
+        self.inverse[token] = digit
+        self.owner.symbol_map = self.symbol_map
+        self._register_numeric_token(token, digit=digit)
 
     def _init_seed_symbols(self):
         """Seed with minimal tokens up to base-1."""
@@ -331,6 +360,10 @@ class NumericSystem:
         except Exception:
             return str(n)
 
+        owner_map = getattr(self.owner, "symbol_map", None)
+        if isinstance(owner_map, dict) and owner_map is not self.symbol_map:
+            self.symbol_map = owner_map
+
         if not hasattr(self, "symbol_map") or self.symbol_map is None:
             self.symbol_map = {}
         else:
@@ -338,6 +371,7 @@ class NumericSystem:
                 k: v for k, v in self.symbol_map.items()
                 if isinstance(v, str) and v.strip()
             }
+        self.owner.symbol_map = self.symbol_map
 
         tokens = []
         for d in digits:
