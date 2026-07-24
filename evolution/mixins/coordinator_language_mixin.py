@@ -448,6 +448,72 @@ class CoordinatorLanguageMixin:
             "meaning": {"referent": referent},
         }
 
+    def _human_token_practice_act(self, speaker, listener):
+        """Attach one human token to a valid community message for rehearsal."""
+        token_counts = getattr(self, "human_token_memory", {}) or {}
+        origins = getattr(self, "human_token_origins", {}) or {}
+        token_counts = {
+            token: count for token, count in token_counts.items()
+            if origins.get(token) == "human"
+        }
+        if not token_counts:
+            return None
+        core = self._grounded_dialogue_act(speaker, listener)
+        if core is None:
+            return None
+        token = self._choose_human_practice_token(token_counts)
+        if token is None:
+            return None
+        return {
+            "intent": "human_practice",
+            "kind": "human_token_practice",
+            "signal": f"{core['signal']} {token}",
+            "meaning": {**core.get("meaning", {}), "human_token": token},
+            "core": core,
+        }
+
+    def _choose_human_practice_token(self, token_counts):
+        """Rotate through human words instead of repeatedly choosing a tie."""
+        candidates = sorted(token_counts)
+        if not candidates:
+            return None
+
+        recent = getattr(self, "human_practice_recent", None)
+        if recent is None:
+            from collections import deque
+            self.human_practice_recent = deque(maxlen=8)
+            recent = self.human_practice_recent
+        practice_counts = getattr(self, "human_practice_counts", None)
+        if practice_counts is None:
+            from collections import Counter
+            self.human_practice_counts = Counter()
+            practice_counts = self.human_practice_counts
+
+        # Do not repeat the last selected word while another human word is
+        # available.  The short history further spreads practice across a
+        # prompt's vocabulary, while weighted choice retains some variety.
+        available = [token for token in candidates if token not in recent]
+        if not available:
+            available = [token for token in candidates if token != (recent[-1] if recent else None)]
+        if not available:
+            available = candidates
+        weights = [
+            (1.0 / (1.0 + practice_counts[token])) * (1.0 + min(3, token_counts[token]) * 0.10)
+            for token in available
+        ]
+        token = random.choices(available, weights=weights, k=1)[0]
+        practice_counts[token] += 1
+        recent.append(token)
+        return token
+
+    def _social_dialogue_act(self, speaker, listener):
+        """Mostly use grounded grammar; occasionally rehearse human input."""
+        if getattr(self, "human_token_memory", None) and random.random() < 0.18:
+            practice = self._human_token_practice_act(speaker, listener)
+            if practice is not None:
+                return practice
+        return self._grounded_dialogue_act(speaker, listener)
+
     def _interpret_grounded_dialogue_act(self, listener, act):
         """Return whether a listener recovered the intended grounded meaning."""
         if act is None:
@@ -458,6 +524,12 @@ class CoordinatorLanguageMixin:
         task_system = getattr(listener, "task_system", None)
 
         try:
+            if kind == "human_token_practice":
+                core = act.get("core") or {}
+                token = meaning.get("human_token")
+                if not token or token not in listener.vocab:
+                    return False
+                return self._interpret_grounded_dialogue_act(listener, core)
             if kind == "compositional_action_signal" and task_system is not None:
                 response = task_system._solve_compositional_action_signal({"data": {"signal": signal}})
                 return bool(response and all(response.get(key) == value for key, value in meaning.items()))
@@ -502,6 +574,7 @@ class CoordinatorLanguageMixin:
             "grounded_exchanges": 0,
             "grounded_successes": 0,
             "teaching_exchanges": 0,
+            "human_token_practice_exchanges": 0,
             "free_turns": 0,
         }
 
@@ -538,8 +611,8 @@ class CoordinatorLanguageMixin:
             # practice/teaching and to acknowledge an interpretable message.
             # The old alternation generated unrelated utterances each turn.
             acts = [
-                self._grounded_dialogue_act(a, b),
-                self._grounded_dialogue_act(b, a),
+                self._social_dialogue_act(a, b),
+                self._social_dialogue_act(b, a),
             ]
             act_index = 0
             active_act = None
@@ -567,6 +640,9 @@ class CoordinatorLanguageMixin:
                     self.dialogue_metrics["grounded_exchanges"] += 1
                     self.dialogue_metrics["grounded_successes"] += int(understood)
                     self.dialogue_metrics["teaching_exchanges"] += int(active_act.get("intent") == "teach")
+                    self.dialogue_metrics["human_token_practice_exchanges"] += int(
+                        active_act.get("kind") == "human_token_practice"
+                    )
                     # A successful acknowledgement mirrors the learnable form;
                     # on failure the learner falls back to its own expression.
                     utter = active_act["signal"] if understood else None

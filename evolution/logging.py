@@ -107,6 +107,7 @@ def compute_grounding_task_metrics(tasks):
         "referential": {"referential_signal"},
         "action": {"action_signal"},
         "compositional": {"compositional_signal", "compositional_action_signal"},
+        "human_dictionary": {"human_dictionary_link"},
     }
     totals = {
         name: {"tasks": 0, "assigned": 0, "attempted": 0, "answered": 0, "correct": 0}
@@ -227,6 +228,7 @@ def compute_generation_summary(coordinator):
         "grounded_dialogue_exchanges": int(dialogue_metrics.get("grounded_exchanges", 0)),
         "grounded_dialogue_successes": int(dialogue_metrics.get("grounded_successes", 0)),
         "teaching_dialogue_exchanges": int(dialogue_metrics.get("teaching_exchanges", 0)),
+        "human_token_practice_exchanges": int(dialogue_metrics.get("human_token_practice_exchanges", 0)),
         "free_dialogue_turns": int(dialogue_metrics.get("free_turns", 0)),
         "conversation_pending": int(conversation_metrics.get("pending", 0)),
         "conversation_answers": int(conversation_metrics.get("answers", 0)),
@@ -308,6 +310,7 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                 "   Grounded chat: "
                 f"{successes}/{exchanges} understood; "
                 f"teaching={int(dialogue_metrics.get('teaching_exchanges', 0))}; "
+                f"human-token practice={int(dialogue_metrics.get('human_token_practice_exchanges', 0))}; "
                 f"free turns={int(dialogue_metrics.get('free_turns', 0))}\n"
             )
         conversation_metrics = getattr(
@@ -601,6 +604,20 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                             f"  Agent {r['agent_id']}: referent={r.get('referent')!r} "
                             f"action={r.get('action')!r} value={r.get('value')} "
                             f"order={r.get('order')} ({outcome})\n"
+                        )
+
+                elif ttype == "human_dictionary_link":
+                    data = task.get("data", {}) or {}
+                    f.write(
+                        f"  word={data.get('word')!r} relation={data.get('relation')} "
+                        f"options={data.get('options', [])}\n"
+                    )
+                    accepted = set(data.get("accepted", []) or [])
+                    for r in responses:
+                        outcome = "correct" if r.get("related") in accepted else "wrong"
+                        f.write(
+                            f"  Agent {r['agent_id']}: related={r.get('related')!r} "
+                            f"confidence={r.get('confidence', 0.0):.2f} ({outcome})\n"
                         )
 
                 # =========================================================

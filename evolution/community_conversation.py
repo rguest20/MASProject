@@ -144,8 +144,54 @@ class CommunityConversation:
         if memory is None:
             coordinator.human_token_memory = Counter()
             memory = coordinator.human_token_memory
+        origins = getattr(coordinator, "human_token_origins", None)
+        if origins is None:
+            coordinator.human_token_origins = {}
+            origins = coordinator.human_token_origins
+
+        dictionary_relations = {}
+        dictionary = getattr(coordinator, "human_dictionary", None)
+        if dictionary is not None:
+            for token in tokens:
+                relations = dictionary.semantic_relations(token)
+                if relations is not None:
+                    dictionary_relations[token] = relations
+
+        public = set(coordinator.community_lexicon.numeric_conventions().values())
+        public.update(coordinator.community_lexicon.referential_conventions().values())
+        public.update(coordinator.community_lexicon.action_conventions().values())
+        known_to_community = set(public)
+        for agent in coordinator.agents:
+            known_to_community.update(getattr(agent, "vocab", set()))
+
         for token in tokens:
-            memory[token] += 1
+            # A human quoting ``belmuk`` is useful evidence about how they
+            # attend to community language, but it is not an English word the
+            # agents need to rehearse as a new discourse item.
+            if token in origins:
+                memory[token] += 1
+            elif token not in known_to_community:
+                origins[token] = "human"
+                memory[token] += 1
+
+        sentence_tokens = [token for token in tokens if origins.get(token) == "human"]
+        sentence_pool = getattr(coordinator, "human_sentence_tokens", None)
+        if sentence_pool is None:
+            coordinator.human_sentence_tokens = Counter()
+            sentence_pool = coordinator.human_sentence_tokens
+        transitions = getattr(coordinator, "human_sentence_transitions", None)
+        if transitions is None:
+            from collections import defaultdict
+            coordinator.human_sentence_transitions = defaultdict(Counter)
+            transitions = coordinator.human_sentence_transitions
+        sentence_pool.update(sentence_tokens)
+        for left, right in zip(sentence_tokens, sentence_tokens[1:]):
+            transitions[left][right] += 1
+        # Dictionary neighbours are eligible words, but with lower salience
+        # than words a human has actually used in the transcript.
+        for relations in dictionary_relations.values():
+            for related in relations["synonyms"] + relations["antonyms"]:
+                sentence_pool[related] += 0.25
 
         for agent in coordinator.agents:
             try:
@@ -160,6 +206,16 @@ class CommunityConversation:
                 # Co-occurrence is the only initial signal: the community is
                 # not told that an English word has a fixed meaning.
                 agent._observe_language_tokens(tokens, gain=0.20)
+                for token, relations in dictionary_relations.items():
+                    related = relations["synonyms"] + relations["antonyms"]
+                    agent.dict_vocab.update(related)
+                    agent.semantic_system.ensure_vec(token)
+                    for word in relations["synonyms"]:
+                        agent.semantic_system.ensure_vec(word)
+                        agent.semantic_system.link(token, word, +0.12)
+                    for word in relations["antonyms"]:
+                        agent.semantic_system.ensure_vec(word)
+                        agent.semantic_system.link(token, word, -0.10)
             except Exception:
                 continue
 
@@ -218,6 +274,103 @@ class CommunityConversation:
                 continue
         self.metrics["free_answers"] = int(self.metrics.get("free_answers", 0)) + 1
         return answer, votes / max(1, population)
+
+    def _human_sentence_reply(self, coordinator, prompt):
+        """Have agents propose and vote on a sentence from human word material.
+
+        There are no fixed English sentence templates here.  Word order comes
+        from sequences Ryan has written; when a continuation is absent, an
+        agent may step to a nearby dictionary word.  The result is primitive,
+        but it is genuinely constructed from the community's growing human
+        token graph rather than filled into a predefined phrase.
+        """
+        prompt_tokens = self._human_tokens(prompt)
+        self._ingest_human_tokens(coordinator, prompt_tokens)
+        pool = getattr(coordinator, "human_sentence_tokens", {}) or {}
+        if not pool:
+            return None
+        transitions = getattr(coordinator, "human_sentence_transitions", {}) or {}
+        dictionary = getattr(coordinator, "human_dictionary", None)
+
+        def related_words(word):
+            relations = dictionary.semantic_relations(word) if dictionary is not None else None
+            if not relations:
+                return []
+            return relations["synonyms"] + relations["antonyms"]
+
+        def choose_word(agent, candidates):
+            candidates = list(dict.fromkeys(word for word in candidates if word in pool))
+            if not candidates:
+                return None
+            prefs = agent.utter_bias["symbol_preferences"]
+            weights = [
+                max(0.05, float(pool[word])) * (0.5 + float(prefs.get(word, 0.2)))
+                for word in candidates
+            ]
+            return random.choices(candidates, weights=weights, k=1)[0]
+
+        proposals = []
+        starts = [word for word in prompt_tokens if word in pool] or list(pool)
+        for agent in coordinator.agents:
+            start = choose_word(agent, starts)
+            if start is None:
+                continue
+            words = [start]
+            target_length = random.randint(3, 6)
+            while len(words) < target_length:
+                current = words[-1]
+                continuation = list((transitions.get(current, {}) or {}).keys())
+                if not continuation:
+                    continuation = related_words(current)
+                if not continuation:
+                    continuation = list(pool)
+                unseen = [word for word in continuation if word not in words]
+                if unseen:
+                    continuation = unseen
+                else:
+                    remaining = [word for word in pool if word not in words]
+                    if not remaining:
+                        break
+                    continuation = remaining
+                next_word = choose_word(agent, continuation)
+                if next_word is None:
+                    break
+                words.append(next_word)
+            proposals.append(" ".join(words) + ".")
+
+        if not proposals:
+            return None
+
+        prompt_phrase = " ".join(prompt_tokens)
+
+        def sentence_score(voter, sentence):
+            words = self._human_tokens(sentence)
+            if not words:
+                return -1.0
+            observed_pairs = sum(
+                float((transitions.get(left, {}) or {}).get(right, 0))
+                for left, right in zip(words, words[1:])
+            )
+            semantic_pairs = 0.0
+            for left, right in zip(words, words[1:]):
+                edge = getattr(voter.semantic_system, "links", {}).get(left, {}).get(right, {})
+                semantic_pairs += abs(float(edge.get("w", 0.0))) if isinstance(edge, dict) else 0.0
+            familiar = sum(word in voter.vocab or word in voter.dict_vocab for word in words) / len(words)
+            copied_prompt = 1.0 if " ".join(words) == prompt_phrase else 0.0
+            return (0.45 * familiar) + (0.30 * observed_pairs) + (0.20 * semantic_pairs) - (0.25 * copied_prompt)
+
+        ballot = [max(proposals, key=lambda sentence: sentence_score(agent, sentence)) for agent in coordinator.agents]
+        sentence, votes, population = self._agreement(ballot, len(coordinator.agents))
+        if sentence is None:
+            return None
+        response_tokens = self._human_tokens(sentence)
+        for agent in coordinator.agents:
+            try:
+                agent.vocab.update(response_tokens)
+                agent._observe_language_tokens(prompt_tokens + response_tokens, gain=0.30)
+            except Exception:
+                continue
+        return sentence, votes / max(1, population)
 
     def _community_number(self, coordinator, value):
         ledger = coordinator.community_lexicon
@@ -320,6 +473,9 @@ class CommunityConversation:
                 return "Use an action a0-a3, a referent r0-r5, and a known quantity (or teach aliases first).", 0.0
             return self._community_action(coordinator, action_id, referent, value)
 
+        human_sentence = self._human_sentence_reply(coordinator, cleaned)
+        if human_sentence is not None:
+            return human_sentence
         return self._free_community_reply(coordinator, cleaned)
 
     def poll(self, coordinator):

@@ -4,7 +4,7 @@ import random
 import re
 import json
 import secrets
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
@@ -18,6 +18,7 @@ from evolution.logging import compute_generation_summary, append_generation_to_c
 from evolution.programs import run_program, safe, mutate_program
 from evolution.mixins.global_registry import GlobalTokenRegistry
 from evolution.community_lexicon import CommunityLexicon
+from evolution.human_dictionary import HumanDictionary
 from evolution.coordinator_settings import (
     POP_SIZE,
     ELITE_RATIO,
@@ -88,6 +89,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.semantic_alignment_tasks = []
         self.token_registry = GlobalTokenRegistry()
         self.community_lexicon = CommunityLexicon()
+        self.human_dictionary = HumanDictionary()
 
         self.cached_dictionary_words = None
         self.semantic_seeds = {"words": [], "synonyms": [], "antonyms": []}
@@ -99,6 +101,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.agents = [Agent(id=i, token_registry=self.token_registry) for i in range(POP_SIZE)]
         for agent in self.agents:
             agent.community_lexicon = self.community_lexicon
+            agent.human_dictionary = self.human_dictionary
         self.last_utterances = {}   # agent_id -> utterance
         self.challenge = ChallengeSystem()
         self.action_queue = []
@@ -109,6 +112,15 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.numeric_memory = []
         self.action_memory = []
         self.human_token_memory = Counter()
+        # Tokens introduced by a human prompt, distinct from a human quoting
+        # a word that the community already invented.
+        self.human_token_origins = {}
+        self.human_practice_counts = Counter()
+        self.human_practice_recent = deque(maxlen=8)
+        self.human_dictionary_link_counts = Counter()
+        self.human_sentence_form_votes = Counter()
+        self.human_sentence_tokens = Counter()
+        self.human_sentence_transitions = defaultdict(Counter)
         # Reset and filled by run_dialogues each generation.  Keeping this
         # separate from the long dialogue archive makes the current social
         # language pressure visible in the CSV/report.
@@ -694,6 +706,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         child = Agent(id = new_id, token_registry=self.token_registry)
         child.community_lexicon = self.community_lexicon
+        child.human_dictionary = self.human_dictionary
 
         # ---------------------------------------------------
         # 1) TRAITS

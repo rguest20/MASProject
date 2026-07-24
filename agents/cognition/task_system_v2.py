@@ -155,6 +155,8 @@ class TaskSystemV2:
                 resp = self._solve_compositional_signal(task)
             elif ttype == "compositional_action_signal":
                 resp = self._solve_compositional_action_signal(task)
+            elif ttype == "human_dictionary_link":
+                resp = self._solve_human_dictionary_link(task)
             elif ttype == "semantic_alignment":
                 resp = self._solve_semantic_gap(task)
             elif ttype == "agreement_dialogue":
@@ -706,6 +708,24 @@ class TaskSystemV2:
             "signal": signal,
             "action": action,
             "confidence": 0.85 if action is not None else 0.10,
+        }
+
+    def _solve_human_dictionary_link(self, task):
+        """Use the supplied human dictionary to identify a semantic link."""
+        data = task.get("data", {}) or {}
+        word = data.get("word", "")
+        relation = data.get("relation")
+        options = data.get("options", []) or []
+        dictionary = getattr(self, "human_dictionary", None)
+        relations = dictionary.semantic_relations(word) if dictionary is not None else None
+        related = [] if relations is None else relations.get(f"{relation}s", [])
+        answer = next((option for option in options if option in related), None)
+        return {
+            "agent_id": f"A{self.id}",
+            "word": word,
+            "relation": relation,
+            "related": answer,
+            "confidence": 0.85 if answer is not None else 0.10,
         }
 
     def _solve_compositional_action_signal(self, task):

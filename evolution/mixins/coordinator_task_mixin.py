@@ -220,6 +220,15 @@ class CoordinatorTaskMixin:
                 ),
             ]
             task_types = task_types[:num_tasks]
+            # A human word with a dictionary entry opens an additional,
+            # inspectable semantic task.  It supplements rather than replaces
+            # the established grounding curriculum.
+            if (
+                getattr(self, "human_token_memory", None)
+                and gen % 2 == 0
+                and self._human_dictionary_candidates()
+            ):
+                task_types.append("human_dictionary_link")
         else:
             self._update_task_weights_homeostasis(verbose=(gen % 20 == 0))
             task_types = [self._sample_task_type() for _ in range(num_tasks)]
@@ -239,6 +248,55 @@ class CoordinatorTaskMixin:
     # ---------------------------------------------------------
     #  Task generators
     # ---------------------------------------------------------
+    def _human_dictionary_candidates(self):
+        """Human-origin words that have useful, bounded dictionary evidence."""
+        dictionary = getattr(self, "human_dictionary", None)
+        origins = getattr(self, "human_token_origins", {}) or {}
+        if dictionary is None:
+            return []
+        candidates = []
+        for word, origin in origins.items():
+            if origin != "human":
+                continue
+            relations = dictionary.semantic_relations(word)
+            if relations and (relations["synonyms"] or relations["antonyms"]):
+                candidates.append((word, relations))
+        return candidates
+
+    def generate_human_dictionary_link_task(self):
+        """Ask an agent to identify a dictionary-supported human word link."""
+        candidates = self._human_dictionary_candidates()
+        if not candidates or not self.agents:
+            return None
+
+        counts = getattr(self, "human_dictionary_link_counts", {})
+        words = [word for word, _ in candidates]
+        weights = [1.0 / (1.0 + counts.get(word, 0)) for word in words]
+        word, relations = random.choices(candidates, weights=weights, k=1)[0]
+        relation = "synonym" if relations["synonyms"] else "antonym"
+        accepted = relations["synonyms"] if relation == "synonym" else relations["antonyms"]
+        accepted = accepted[:6]
+        if not accepted:
+            return None
+        target = random.choice(accepted)
+        distractors = [candidate for candidate in words if candidate != word and candidate not in accepted]
+        options = list(dict.fromkeys([target] + distractors[:3]))
+        random.shuffle(options)
+        agent = random.choice(self.agents)
+        counts[word] += 1
+        return {
+            "task_id": self._generate_task_id(),
+            "task_type": "human_dictionary_link",
+            "assigned_agents": [agent.id],
+            "data": {
+                "word": word,
+                "relation": relation,
+                "options": options,
+                "accepted": accepted,
+            },
+            "responses": [],
+        }
+
     def generate_describe_concept_task(self):
         if not self.agents:
             return None
@@ -1075,6 +1133,31 @@ class CoordinatorTaskMixin:
                 listener.semantic_system.ensure_vec(signal)
                 listener._ensure_token_semantic(signal)
 
+        self._record_task_evaluation(task, correct=correct)
+
+    def score_human_dictionary_link(self, task):
+        """Reward correct lookup and reinforce the discovered semantic edge."""
+        data = task.get("data", {}) or {}
+        word = data.get("word")
+        relation = data.get("relation")
+        accepted = set(data.get("accepted", []) or [])
+        correct = 0
+        for response in task.get("responses", []):
+            try:
+                agent_id = int(response["agent_id"][1:])
+            except (KeyError, TypeError, ValueError):
+                continue
+            agent = self.agent_by_id(agent_id)
+            related = response.get("related")
+            if agent is None or related not in accepted:
+                continue
+            correct += 1
+            agent.own_fitness += 0.20
+            try:
+                weight = +0.18 if relation == "synonym" else -0.14
+                agent.semantic_system.link(word, related, weight)
+            except Exception:
+                pass
         self._record_task_evaluation(task, correct=correct)
 
     def score_compositional_signal(self, task):
