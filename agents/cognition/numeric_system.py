@@ -37,6 +37,36 @@ class NumericSystem:
         unique = set(tokens)
         return max(0, len(tokens) - len(unique))
 
+    def _fresh_symbol(self, reserved_tokens=None):
+        """Create a token not already used by another digit in this system."""
+        reserved = {str(token).strip().lower() for token in (reserved_tokens or []) if token}
+        reserved.update(
+            str(token).strip().lower()
+            for token in getattr(self, "symbols", {}).values()
+            if token
+        )
+        reserved.update(
+            str(token).strip().lower()
+            for token in getattr(self, "symbol_map", {}).values()
+            if token
+        )
+
+        vowels = "aeiou"
+        consonants = "bcdfghjklmnpqrstvwxyz"
+        for _ in range(256):
+            token = random.choice(consonants) + random.choice(vowels)
+            if token not in reserved:
+                return token
+
+        # The two-syllable fallback makes exhaustion impossible in practice.
+        while True:
+            token = (
+                random.choice(consonants) + random.choice(vowels) +
+                random.choice(consonants) + random.choice(vowels)
+            )
+            if token not in reserved:
+                return token
+
     def _register_numeric_token(self, tok: str, digit: Optional[int] = None):
         if not isinstance(tok, str) or not tok.strip():
             return
@@ -159,11 +189,27 @@ class NumericSystem:
     def set_symbol_map(self, symbol_map):
         """
         Accept an int->token map from the Agent and build a reverse
-        token->int map for decoding.
+        token->int map for decoding.  A digit system must be injective: one
+        token cannot name two distinct digits.
         """
-        self.symbol_map = dict(symbol_map or {})
+        clean_map = {}
+        used_tokens = set()
+        for digit, token in (symbol_map or {}).items():
+            if not isinstance(digit, int) or digit < 0:
+                continue
+            token = str(token).strip().lower() if token is not None else ""
+            if not token or token in used_tokens:
+                token = self._fresh_symbol(used_tokens)
+            clean_map[digit] = token
+            used_tokens.add(token)
+
+        self.symbol_map = clean_map
         self.owner.symbol_map = self.symbol_map
         self.inverse_symbol_map = {v: k for k, v in self.symbol_map.items()}
+        for digit, token in self.symbol_map.items():
+            self.symbols[digit] = token
+        self.inverse = {token: digit for digit, token in self.symbols.items()}
+        self.numeric_semantic = self.symbols
 
     def learn_digit_mapping(self, token: str, digit: int):
         """Ground a peer's one-token numeral in this agent's number system."""
@@ -173,27 +219,23 @@ class NumericSystem:
             return
 
         token = token.strip().lower()
-        old_token = self.symbol_map.get(digit)
+        mapping = dict(self.symbol_map)
+        old_token = mapping.get(digit)
         old_digit = self.inverse_symbol_map.get(token)
 
+        # Swapping retains the previous token for the displaced digit, rather
+        # than leaving two digits with the newly learned peer token.
         if old_digit is not None and old_digit != digit:
-            self.symbol_map[old_digit] = old_token
-            if old_token:
-                self.inverse_symbol_map[old_token] = old_digit
+            mapping[old_digit] = old_token or self._fresh_symbol(mapping.values())
 
-        self.symbol_map[digit] = token
-        self.inverse_symbol_map[token] = digit
-        self.symbols[digit] = token
-        self.inverse[token] = digit
-        self.owner.symbol_map = self.symbol_map
+        mapping[digit] = token
+        self.set_symbol_map(mapping)
         self._register_numeric_token(token, digit=digit)
 
     def _init_seed_symbols(self):
         """Seed with minimal tokens up to base-1."""
-        vowels = "aeiou"
-        consonants = "bcdfghjklmnpqrstvwxyz"
         for n in range(self.base):
-            token = random.choice(consonants) + random.choice(vowels)
+            token = self._fresh_symbol(self.symbols.values())
             self.symbols[n] = token
             self.inverse[token] = n
             self._register_numeric_token(token, digit=n)
@@ -260,10 +302,12 @@ class NumericSystem:
         tok = self.symbols.get(n)
 
         # If tok is missing OR is None OR empty → regenerate safely
-        if not tok or not isinstance(tok, str):
-            vowels = "aeiou"
-            consonants = "bcdfghjklmnpqrstvwxyz"
-            tok = random.choice(consonants) + random.choice(vowels)
+        other_tokens = {
+            value for digit, value in self.symbols.items()
+            if digit != n and isinstance(value, str)
+        }
+        if not tok or not isinstance(tok, str) or tok in other_tokens:
+            tok = self._fresh_symbol(other_tokens)
             self.symbols[n] = tok
             self.inverse[tok] = n
             self._register_numeric_token(tok, digit=n)
@@ -364,14 +408,7 @@ class NumericSystem:
         if isinstance(owner_map, dict) and owner_map is not self.symbol_map:
             self.symbol_map = owner_map
 
-        if not hasattr(self, "symbol_map") or self.symbol_map is None:
-            self.symbol_map = {}
-        else:
-            self.symbol_map = {
-                k: v for k, v in self.symbol_map.items()
-                if isinstance(v, str) and v.strip()
-            }
-        self.owner.symbol_map = self.symbol_map
+        self.set_symbol_map(self.symbol_map or {})
 
         tokens = []
         for d in digits:
@@ -383,6 +420,7 @@ class NumericSystem:
                 except Exception:
                     tok = f"num{d}"
                 self.symbol_map[d] = tok
+                self.inverse_symbol_map[tok] = d
 
             if tok is None:
                 continue

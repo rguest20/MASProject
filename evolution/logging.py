@@ -44,8 +44,8 @@ def compute_cultural_signature(agent):
     return hashlib.md5(raw.encode()).hexdigest()[:8]
 
 
-def compute_numeric_alignment(agents):
-    """Mean pairwise agreement over shared digit-to-token mappings."""
+def _numeric_alignment_scores(agents):
+    """Pairwise agreement scores over shared digit-to-token mappings."""
     scores = []
     for index, left in enumerate(agents):
         left_map = getattr(left, "symbol_map", {}) or {}
@@ -54,7 +54,68 @@ def compute_numeric_alignment(agents):
             shared = set(left_map) & set(right_map)
             if shared:
                 scores.append(sum(left_map[d] == right_map[d] for d in shared) / len(shared))
+    return scores
+
+
+def compute_numeric_alignment(agents):
+    """Mean pairwise agreement over shared digit-to-token mappings."""
+    scores = _numeric_alignment_scores(agents)
     return sum(scores) / len(scores) if scores else 0.0
+
+
+def compute_numeric_map_health(agents):
+    """Measure coverage and injectivity of each agent's active numeral map."""
+    coverages = []
+    injectivities = []
+    for agent in agents:
+        base = max(1, getattr(getattr(agent, "counting", None), "base", 10))
+        mapping = getattr(agent, "symbol_map", {}) or {}
+        tokens = [mapping[d] for d in range(base) if mapping.get(d)]
+        coverages.append(len(tokens) / base)
+        injectivities.append(len(set(tokens)) / len(tokens) if tokens else 1.0)
+    return (
+        statistics.mean(coverages) if coverages else 0.0,
+        statistics.mean(injectivities) if injectivities else 1.0,
+    )
+
+
+def compute_grounding_task_metrics(tasks):
+    """Summarise attempts, answers, and correct answers by grounding task."""
+    groups = {
+        "numeric": {"reconcile_counts", "translate_number"},
+        "referential": {"referential_signal"},
+    }
+    totals = {
+        name: {"tasks": 0, "assigned": 0, "attempted": 0, "answered": 0, "correct": 0}
+        for name in groups
+    }
+    for task in tasks:
+        task_type = task.get("task_type")
+        group = next((name for name, types in groups.items() if task_type in types), None)
+        if group is None:
+            continue
+        evaluation = task.get("evaluation", {}) or {}
+        stats = totals[group]
+        stats["tasks"] += 1
+        stats["assigned"] += int(evaluation.get("assigned", len(task.get("assigned_agents") or [])))
+        stats["attempted"] += int(evaluation.get("attempted", len(set(task.get("attempted_by") or []))))
+        stats["answered"] += int(evaluation.get("answered", len(task.get("responses") or [])))
+        stats["correct"] += int(evaluation.get("correct", 0))
+
+    result = {}
+    for name, stats in totals.items():
+        prefix = f"{name}_task"
+        result.update({
+            f"{prefix}s": stats["tasks"],
+            f"{prefix}_assigned": stats["assigned"],
+            f"{prefix}_attempted": stats["attempted"],
+            f"{prefix}_answered": stats["answered"],
+            f"{prefix}_correct": stats["correct"],
+            f"{prefix}_attempt_rate": stats["attempted"] / stats["assigned"] if stats["assigned"] else 0.0,
+            f"{prefix}_answer_rate": stats["answered"] / stats["assigned"] if stats["assigned"] else 0.0,
+            f"{prefix}_accuracy": stats["correct"] / stats["answered"] if stats["answered"] else 0.0,
+        })
+    return result
 
 
 # -----------------------------
@@ -64,9 +125,11 @@ def compute_generation_summary(coordinator):
     agents = coordinator.agents
     gen = coordinator.generation_index
 
-    mean_align = compute_numeric_alignment(agents)
-    std_align = 0.0
+    alignment_scores = _numeric_alignment_scores(agents)
+    mean_align = sum(alignment_scores) / len(alignment_scores) if alignment_scores else 0.0
+    std_align = statistics.pstdev(alignment_scores) if len(alignment_scores) > 1 else 0.0
     align_div = len({compute_cultural_signature(a) for a in agents})
+    numeric_coverage, numeric_injectivity = compute_numeric_map_health(agents)
 
     mean_energy = statistics.mean(a.energy for a in agents)
     mean_fitness = statistics.mean(a.total_fitness for a in agents)
@@ -112,11 +175,14 @@ def compute_generation_summary(coordinator):
         "mean_energy": mean_energy,
         "mean_fitness": mean_fitness,
         "mean_task_fitness": statistics.mean(getattr(a, "task_fitness", 0.0) for a in agents),
+        "numeric_map_coverage": numeric_coverage,
+        "numeric_map_injectivity": numeric_injectivity,
         "vocab_size_mean": vocab_mean,
         "base_diversity": base_div,
         "cluster_diversity": cluster_div,
         "top_clusters": top_clusters,
     }
+    data.update(compute_grounding_task_metrics(getattr(coordinator, "active_tasks", []) or []))
     if "_last_need_data" in globals():
         data.update(_last_need_data)
     return data
@@ -315,6 +381,16 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
 
                 f.write(f"\nTask {tid} ({ttype}):\n")
 
+                evaluation = task.get("evaluation", {}) or {}
+                if evaluation:
+                    f.write(
+                        "  Outcome: "
+                        f"assigned={evaluation.get('assigned', 0)} "
+                        f"attempted={evaluation.get('attempted', 0)} "
+                        f"answered={evaluation.get('answered', 0)} "
+                        f"correct={evaluation.get('correct', 0)}\n"
+                    )
+
                 # ---------------------------------------------------------
                 # Collect all agent responses for this task
                 # ---------------------------------------------------------
@@ -365,14 +441,28 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                 # =========================================================
                 # TASK TYPE: reconcile_counts
                 # =========================================================
-                elif ttype == "reconcile_counts":
-                    f.write(f"  utterance='{data.get('utterance', '')}'\n")
+                elif ttype in {"reconcile_counts", "translate_number"}:
+                    target = task.get("value")
+                    f.write(f"  target={target} views={task.get('views', {})}\n")
 
                     for r in responses:
-                        mode = r.get("mode", "?")
-                        result = r.get("result", "")
+                        result = r.get("normalized")
+                        outcome = "correct" if result == target else "wrong"
                         f.write(
-                            f"  Agent {r['agent_id']}: mode={mode} result='{result}'\n"
+                            f"  Agent {r['agent_id']}: result={result} "
+                            f"confidence={r.get('confidence', 0.0):.2f} ({outcome})\n"
+                        )
+
+                elif ttype == "referential_signal":
+                    task_data = task.get("data", {}) or {}
+                    target = task_data.get("referent")
+                    f.write(f"  signal='{task_data.get('signal', '')}' target={target}\n")
+                    for r in responses:
+                        result = r.get("referent")
+                        outcome = "correct" if result == target else "wrong"
+                        f.write(
+                            f"  Agent {r['agent_id']}: referent={result!r} "
+                            f"confidence={r.get('confidence', 0.0):.2f} ({outcome})\n"
                         )
 
                 # =========================================================

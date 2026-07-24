@@ -44,3 +44,8 @@ MAX_FIT = 1e6
 ENERGY_MAX = 100.0
 IDLE_TAX = 1.0
 MIN_PARTICIPATION = 1
+
+# --- Focused emergent-language experiment ---
+# Keep early experiments centred on communicative grounding instead of
+# diluting the small per-generation task budget across unrelated task types.
+FOCUSED_GROUNDING_EXPERIMENT = True

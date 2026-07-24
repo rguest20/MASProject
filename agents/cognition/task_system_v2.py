@@ -109,11 +109,24 @@ class TaskSystemV2:
         if not candidates:
             return
 
-        task = random.choice(candidates)
+        # An explicit assignment is a commitment by the coordinator: do not
+        # let an unrelated task lottery make the intended listener skip the
+        # communicative trial.  Unassigned background tasks remain bounded to
+        # one random attempt per agent per generation.
+        assigned = [task for task in candidates if task.get("assigned_agents") is not None]
+        tasks_to_attempt = assigned or [random.choice(candidates)]
+        for task in tasks_to_attempt:
+            self._attempt_task(task)
+
+    def _attempt_task(self, task):
         tid = task.get("task_id")
         if tid is None:
             return
         self.tasks_attempted_this_gen.add(tid)
+
+        attempted_by = task.setdefault("attempted_by", [])
+        if self.id not in attempted_by:
+            attempted_by.append(self.id)
 
         # already solved previously? skip
         if tid in self.solved_tasks:

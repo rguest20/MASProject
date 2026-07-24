@@ -1,6 +1,7 @@
 import random
 
 from agents.agent_constants import REL_GT, REL_LT, REL_EQ
+from evolution.coordinator_settings import FOCUSED_GROUNDING_EXPERIMENT
 
 
 class CoordinatorTaskMixin:
@@ -181,12 +182,24 @@ class CoordinatorTaskMixin:
         return types[-1]
 
     def _build_task_batch(self, num_tasks: int, gen: int):
-        self._update_task_weights_homeostasis(verbose=(gen % 20 == 0))
+        if FOCUSED_GROUNDING_EXPERIMENT:
+            # Two numeral translations and two referential trials give each
+            # convention enough repeated feedback to become useful.  This is
+            # intentionally a temporary experimental curriculum, not a claim
+            # that these are the only forms a mature language should support.
+            task_types = [
+                "reconcile_counts",
+                "translate_number",
+                "referential_signal",
+                "referential_signal",
+            ]
+            task_types = task_types[:num_tasks]
+        else:
+            self._update_task_weights_homeostasis(verbose=(gen % 20 == 0))
+            task_types = [self._sample_task_type() for _ in range(num_tasks)]
 
         batch = []
-        for _ in range(num_tasks):
-            ttype = self._sample_task_type()
-
+        for ttype in task_types:
             generator = getattr(self, f"generate_{ttype}_task", None)
             if generator is None:
                 generator = self.generate_numeric_compare_task
@@ -536,25 +549,51 @@ class CoordinatorTaskMixin:
         if len(self.agents) < 2:
             return None
 
-        a, b = random.sample(self.agents, 2)
+        by_id = {agent.id: agent for agent in self.agents}
+        memories = [
+            item for item in getattr(self, "numeric_memory", [])
+            if item["a_id"] in by_id
+            and item["b_id"] in by_id
+            and item["value"] < min(by_id[item["a_id"]].counting.base, by_id[item["b_id"]].counting.base)
+        ]
 
-        ref = random.choice(self.agents)
-        base = getattr(ref.counting, "base", 8)
+        # Rehearsal is essential here: a correction needs a later test of the
+        # same peer signal before it can influence selection.  New pairings
+        # still provide the path by which a convention spreads outward.
+        if memories and random.random() < 0.65:
+            item = random.choice(memories[-120:])
+            a = by_id[item["a_id"]]
+            b = by_id[item["b_id"]]
+            val = item["value"]
+            A_view = item["a_signal"]
+            B_view = item["b_signal"]
+        else:
+            a, b = random.sample(self.agents, 2)
+            ref = random.choice(self.agents)
+            base = getattr(ref.counting, "base", 8)
 
-        # Keep this a single digit so feedback can unambiguously ground a
-        # peer's self-invented numeral in the listener's map.
-        shared_base = min(a.counting.base, b.counting.base, base)
-        val = random.randint(0, max(0, shared_base - 1))
+            # Keep this a single digit so feedback can unambiguously ground a
+            # peer's self-invented numeral in the listener's map.
+            shared_base = min(a.counting.base, b.counting.base, base)
+            val = random.randint(0, max(0, shared_base - 1))
 
-        def encode(agent, value):
-            try:
-                toks = agent.numeric_system.speak_number(value).split()
-            except Exception:
-                toks = ref.numeric_system.speak_number(value).split()
-            return " ".join(toks)
+            def encode(agent, value):
+                try:
+                    toks = agent.numeric_system.speak_number(value).split()
+                except Exception:
+                    toks = ref.numeric_system.speak_number(value).split()
+                return " ".join(toks)
 
-        A_view = encode(a, val)
-        B_view = encode(b, val)
+            A_view = encode(a, val)
+            B_view = encode(b, val)
+            self.numeric_memory.append({
+                "a_id": a.id,
+                "b_id": b.id,
+                "value": val,
+                "a_signal": A_view,
+                "b_signal": B_view,
+            })
+            self.numeric_memory = self.numeric_memory[-240:]
 
         tid = self._generate_task_id()
 
@@ -691,12 +730,10 @@ class CoordinatorTaskMixin:
 
     def score_reconcile_counts(self, task):
         responses = task.get("responses", [])
-        if not responses:
-            return
-
         target = task.get("value")
         sources = task.get("signal_sources", {}) or {}
         views = task.get("views", {}) or {}
+        correct = 0
 
         for r in responses:
             aid = int(r["agent_id"][1:])
@@ -705,6 +742,7 @@ class CoordinatorTaskMixin:
                 continue
 
             if r.get("normalized") == target:
+                correct += 1
                 ag.own_fitness += 0.35
                 source = self.agent_by_id(sources.get(aid, sources.get(str(aid))))
                 if source:
@@ -716,6 +754,8 @@ class CoordinatorTaskMixin:
                 if phrase and len(phrase.split()) == 1:
                     ag.numeric_system.learn_digit_mapping(phrase, target)
 
+        self._record_task_evaluation(task, correct=correct)
+
     def score_translate_number(self, task):
         self.score_reconcile_counts(task)
 
@@ -725,6 +765,7 @@ class CoordinatorTaskMixin:
         referent = data.get("referent")
         signal = data.get("signal")
         speaker = self.agent_by_id(data.get("speaker_id"))
+        correct = 0
 
         for response in responses:
             try:
@@ -736,6 +777,7 @@ class CoordinatorTaskMixin:
                 continue
 
             if response.get("referent") == referent:
+                correct += 1
                 listener.own_fitness += 0.45
                 if speaker:
                     speaker.own_fitness += 0.20
@@ -748,6 +790,26 @@ class CoordinatorTaskMixin:
                 listener.vocab.add(signal)
                 listener.semantic_system.ensure_vec(signal)
                 listener._ensure_token_semantic(signal)
+
+        self._record_task_evaluation(task, correct=correct)
+
+    @staticmethod
+    def _record_task_evaluation(task, correct=0):
+        """Store comparable participation and correctness data for a task."""
+        assigned = task.get("assigned_agents") or []
+        attempted = task.get("attempted_by") or []
+        responses = task.get("responses") or []
+        answered_ids = {
+            response.get("agent_id")
+            for response in responses
+            if isinstance(response, dict) and response.get("agent_id")
+        }
+        task["evaluation"] = {
+            "assigned": len(assigned),
+            "attempted": len(set(attempted)),
+            "answered": len(answered_ids),
+            "correct": correct,
+        }
 
     def score_agreement_dialogue(self, task):
         responses = task.get("responses", [])

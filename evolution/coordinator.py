@@ -101,6 +101,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.next_task_id = 1
         self.active_tasks = []
         self.referential_memory = []
+        self.numeric_memory = []
 
         self.community_semantic = {
             "vecs": {},          # token -> centroid vector
@@ -1009,7 +1010,10 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # then archive / trim
         self.completed_tasks.extend(self.active_tasks)
-        self.active_tasks = self.active_tasks[-3:]
+        # Keep the whole current-generation batch available to telemetry and
+        # reports.  The next generation replaces ``active_tasks`` outright;
+        # only the historical archive needs a cap.
+        self.completed_tasks = self.completed_tasks[-500:]
 
         # motivated action
         for agent in self.agents:
