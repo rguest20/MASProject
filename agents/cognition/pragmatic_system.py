@@ -130,11 +130,14 @@ class PragmaticSystem:
 
         tc = getattr(self.owner, "trust_channels", None)
         if isinstance(tc, dict):
-            prof = tc.get(from_id)
+            # ``dict.get`` bypasses defaultdict's factory.  Older paths also
+            # stored scalar trust, so always normalise before a dialogue turn.
+            if hasattr(self.owner, "_trust_profile"):
+                prof = self.owner._trust_profile(from_id)
+            else:
+                prof = tc[from_id]
             if isinstance(prof, dict):
                 prof["affinity"] = self._clamp(float(prof.get("affinity", 0.0)) + 0.01, -2.0, 2.0)
-            else:
-                tc[from_id] = self._clamp(float(prof or 0.0) + 0.01, -1.0, 1.0)
 
         mot = getattr(self.owner, "motivation", None)
         if isinstance(mot, dict) and "social" in mot:

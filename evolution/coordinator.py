@@ -4,7 +4,7 @@ import random
 import re
 import json
 import secrets
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
@@ -17,6 +17,7 @@ from agents.cognition.numeric_system import NumericSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
 from evolution.programs import run_program, safe, mutate_program
 from evolution.mixins.global_registry import GlobalTokenRegistry
+from evolution.community_lexicon import CommunityLexicon
 from evolution.coordinator_settings import (
     POP_SIZE,
     ELITE_RATIO,
@@ -50,6 +51,7 @@ from evolution.coordinator_settings import (
 )
 from evolution.mixins.coordinator_task_mixin import CoordinatorTaskMixin
 from evolution.mixins.coordinator_language_mixin import CoordinatorLanguageMixin
+from evolution.community_conversation import CommunityConversation
 
 from evolution.behaviours.orchestration import orchestrate_action
 
@@ -65,7 +67,7 @@ def PERF(msg):
 
 
 class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
-    def __init__(self, run_dir=None, seed=None):
+    def __init__(self, run_dir=None, seed=None, conversation_path=None):
         """Create an isolated, reproducible simulation run.
 
         Each coordinator owns its reports and sandbox state under a unique
@@ -85,6 +87,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         self.semantic_alignment_tasks = []
         self.token_registry = GlobalTokenRegistry()
+        self.community_lexicon = CommunityLexicon()
 
         self.cached_dictionary_words = None
         self.semantic_seeds = {"words": [], "synonyms": [], "antonyms": []}
@@ -94,6 +97,8 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         # Core state
         self.generation_index = 0
         self.agents = [Agent(id=i, token_registry=self.token_registry) for i in range(POP_SIZE)]
+        for agent in self.agents:
+            agent.community_lexicon = self.community_lexicon
         self.last_utterances = {}   # agent_id -> utterance
         self.challenge = ChallengeSystem()
         self.action_queue = []
@@ -102,6 +107,17 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.active_tasks = []
         self.referential_memory = []
         self.numeric_memory = []
+        self.action_memory = []
+        self.human_token_memory = Counter()
+        # Reset and filled by run_dialogues each generation.  Keeping this
+        # separate from the long dialogue archive makes the current social
+        # language pressure visible in the CSV/report.
+        self.dialogue_metrics = {}
+        # A human-facing transcript lives outside an individual run so it can
+        # remain available while a watch-mode simulation continues.  The
+        # bridge is inert until a completed ``Ryan: ...`` line appears.
+        self.conversation_path = Path(conversation_path or "converse.txt")
+        self.community_conversation = CommunityConversation(self.conversation_path)
 
         self.community_semantic = {
             "vecs": {},          # token -> centroid vector
@@ -242,6 +258,33 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         with (self.run_dir / "metadata.json").open("w", encoding="utf-8") as file:
             json.dump(metadata, file, indent=2, sort_keys=True)
             file.write("\n")
+
+    def compact_agent_vocabularies(self, max_private_tokens=80):
+        """Retain public and recently useful language, not every old token."""
+        public = set(self.community_lexicon.numeric_conventions().values())
+        public.update(self.community_lexicon.referential_conventions().values())
+        public.update(self.community_lexicon.action_conventions().values())
+        public.update(getattr(self, "human_token_memory", {}).keys())
+
+        for agent in self.agents:
+            protected = set(public)
+            protected.update(getattr(agent, "symbol_map", {}).values())
+            protected.update(getattr(agent, "referent_lexicon", {}).values())
+            protected.update(getattr(agent, "action_lexicon", {}).values())
+            protected.update(getattr(agent, "recent_tokens", [])[-40:])
+            protected.update(getattr(agent, "reasoning_tokens", {}).values())
+
+            preferences = getattr(agent, "utter_bias", {}).get("symbol_preferences", {})
+            candidates = [
+                token for token in getattr(agent, "vocab", set())
+                if isinstance(token, str) and token.strip() and token not in protected
+            ]
+            candidates.sort(key=lambda token: (-float(preferences.get(token, 0.0)), token))
+            agent.vocab = {
+                token for token in protected
+                if isinstance(token, str) and token.strip()
+            }
+            agent.vocab.update(candidates[:max_private_tokens])
 
     def enqueue_action(self, agent, action):
         self.action_queue.append((agent, action))
@@ -650,6 +693,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         """
 
         child = Agent(id = new_id, token_registry=self.token_registry)
+        child.community_lexicon = self.community_lexicon
 
         # ---------------------------------------------------
         # 1) TRAITS
@@ -677,7 +721,28 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         # ---------------------------------------------------
         # 2) VOCAB INHERITANCE
         # ---------------------------------------------------
-        child.vocab = set().union(p1.vocab, p2.vocab, p3.vocab)
+        inherited_vocab = set().union(p1.vocab, p2.vocab, p3.vocab)
+        public_vocab = set(self.community_lexicon.numeric_conventions().values())
+        public_vocab.update(self.community_lexicon.referential_conventions().values())
+
+        def vocabulary_score(token):
+            score = 8.0 if token in public_vocab else 0.0
+            for parent in (p1, p2, p3):
+                score = max(
+                    score,
+                    float(getattr(parent, "utter_bias", {}).get("symbol_preferences", {}).get(token, 0.0)),
+                )
+                if token in getattr(parent, "recent_tokens", [])[-40:]:
+                    score += 1.0
+            return score
+
+        # Inherit a compact active repertoire rather than the unbounded union
+        # of every historical token.  Public conventions are always retained.
+        child.vocab = set(sorted(
+            inherited_vocab,
+            key=lambda token: (-vocabulary_score(token), str(token)),
+        )[:80])
+        child.vocab.update(public_vocab)
         child.dict_vocab = set().union(
             p1.dict_vocab, p2.dict_vocab, p3.dict_vocab
         )
@@ -709,7 +774,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
                     base += np.array(v, dtype=float)
                 base /= len(vecs)
             else:
-                base = np.array(self._rand_vec(32), dtype=float)
+                base = np.array(child._rand_vec(32), dtype=float)
 
             base += np.random.normal(scale=0.02, size=base.shape)
 
@@ -866,6 +931,11 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             decay=0.90
         )
         child.utterance_memory["usage_count"].clear()
+        child.referent_lexicon = {}
+        child.action_lexicon = {}
+        for parent in (p1, p2, p3):
+            child.referent_lexicon.update(getattr(parent, "referent_lexicon", {}))
+            child.action_lexicon.update(getattr(parent, "action_lexicon", {}))
 
         # ---------------------------------------------------
         # 6) NUMERIC-SYMBOL + COUNTING SYSTEM
@@ -1002,6 +1072,8 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         for task in self.active_tasks:
             self.score_task(task)
+
+        self.compact_numeric_overlays()
 
         # Preserve task rewards across the later behavioural-fitness reset.
         for a in self.agents:
@@ -1225,6 +1297,7 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             children.append(child)
 
         self.agents = survivors + children
+        self.compact_agent_vocabularies()
 
         # ✅ DO *NOT* FLUSH HELP FILES HERE ANY MORE
         # (they’re read via offsets; flushing would kill late readers)
@@ -1292,6 +1365,14 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
                     rec["trust_delta"]   *= 0.95
                     rec["offspring_success"] *= 0.95
 
+        # A human prompt is deliberately allowed to sit for a couple of
+        # generations before the community answers.  This gives agents time
+        # to keep practising and makes the external interaction observable in
+        # the same per-generation artifacts as everything else.
+        try:
+            self.community_conversation.poll(self)
+        except Exception as error:
+            print(f"[CONVERSATION ERROR] {error}")
 
         txt_file, csv_file = _get_log_filenames(self)
         summary = compute_generation_summary(self)

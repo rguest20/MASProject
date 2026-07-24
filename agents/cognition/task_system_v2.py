@@ -145,8 +145,16 @@ class TaskSystemV2:
                 resp = self._solve_reconcile_counts(task)
             elif ttype == "translate_number":
                 resp = self._solve_reconcile_counts(task)
+            elif ttype == "translate_quantity":
+                resp = self._solve_reconcile_counts(task)
             elif ttype == "referential_signal":
                 resp = self._solve_referential_signal(task)
+            elif ttype == "action_signal":
+                resp = self._solve_action_signal(task)
+            elif ttype == "compositional_signal":
+                resp = self._solve_compositional_signal(task)
+            elif ttype == "compositional_action_signal":
+                resp = self._solve_compositional_action_signal(task)
             elif ttype == "semantic_alignment":
                 resp = self._solve_semantic_gap(task)
             elif ttype == "agreement_dialogue":
@@ -561,7 +569,17 @@ class TaskSystemV2:
         sym_map = override_map if override_map else self.symbol_map
         b = override_base if override_base else self.counting.base
 
-        rev = {v: k for k, v in sym_map.items()}
+        rev = {}
+        if override_map is None:
+            ledger = getattr(self, "community_lexicon", None)
+            if ledger is not None and hasattr(ledger, "numeric_conventions"):
+                try:
+                    rev.update({token: digit for digit, token in ledger.numeric_conventions().items()})
+                except Exception:
+                    pass
+        for digit, token in sym_map.items():
+            # Public conventions take precedence over a stale private map.
+            rev.setdefault(token, digit)
 
         digits = []
         for t in phrase.split():
@@ -600,7 +618,10 @@ class TaskSystemV2:
         if not phrase:
             return self._task_fail(task.get("task_id"))
 
-        value = self._decode_number_phrase(phrase)
+        ledger = getattr(self, "community_lexicon", None)
+        shared_base = ledger.community_base() if ledger is not None else None
+        decode_base = shared_base or self.numeric_system.base
+        value = self._decode_number_phrase(phrase, override_base=decode_base)
         confidence = 0.85
         if value is None:
             confidence = 0.20
@@ -609,7 +630,7 @@ class TaskSystemV2:
                 digit = self.numeric_system.decode_token(tok)
                 if digit is None:
                     return self._task_fail(task.get("task_id"))
-                value = value * self.numeric_system.base + digit
+                value = value * decode_base + digit
 
         return {
             "agent_id": f"A{self.id}",
@@ -622,17 +643,106 @@ class TaskSystemV2:
         """Interpret a peer's invented signal using this agent's lexicon."""
         data = task.get("data", {}) or {}
         signal = data.get("signal", "")
-        referent = None
-        for known_referent, known_signal in self.referent_lexicon.items():
-            if known_signal == signal:
-                referent = known_referent
-                break
+        ledger = getattr(self, "community_lexicon", None)
+        referent = ledger.referent_for_signal(signal) if ledger is not None else None
+        if referent is None:
+            for known_referent, known_signal in self.referent_lexicon.items():
+                if known_signal == signal:
+                    referent = known_referent
+                    break
 
         return {
             "agent_id": f"A{self.id}",
             "signal": signal,
             "referent": referent,
             "confidence": 0.85 if referent is not None else 0.10,
+        }
+
+    def _solve_compositional_signal(self, task):
+        """Parse a grounded two-slot message without a preinstalled order."""
+        data = task.get("data", {}) or {}
+        tokens = (data.get("signal") or "").split()
+        if len(tokens) != 2:
+            return self._task_fail(task.get("task_id"))
+
+        ledger = getattr(self, "community_lexicon", None)
+        referent = None
+        value = None
+        order = []
+        for token in tokens:
+            found_referent = ledger.referent_for_signal(token) if ledger is not None else None
+            if found_referent is not None:
+                referent = found_referent
+                order.append("referent")
+                continue
+            digit = self.numeric_system.decode_token(token)
+            if digit is not None:
+                value = digit
+                order.append("number")
+            else:
+                return self._task_fail(task.get("task_id"))
+
+        return {
+            "agent_id": f"A{self.id}",
+            "referent": referent,
+            "value": value,
+            "order": tuple(order),
+            "utterance": data.get("signal", ""),
+            "confidence": 0.85 if referent is not None and value is not None else 0.10,
+        }
+
+    def _solve_action_signal(self, task):
+        data = task.get("data", {}) or {}
+        signal = data.get("signal", "")
+        ledger = getattr(self, "community_lexicon", None)
+        action = ledger.action_for_signal(signal) if ledger is not None else None
+        if action is None:
+            for known_action, known_signal in self.action_lexicon.items():
+                if known_signal == signal:
+                    action = known_action
+                    break
+        return {
+            "agent_id": f"A{self.id}",
+            "signal": signal,
+            "action": action,
+            "confidence": 0.85 if action is not None else 0.10,
+        }
+
+    def _solve_compositional_action_signal(self, task):
+        """Parse a grounded referent-action-number message."""
+        data = task.get("data", {}) or {}
+        tokens = (data.get("signal") or "").split()
+        if len(tokens) != 3:
+            return self._task_fail(task.get("task_id"))
+
+        ledger = getattr(self, "community_lexicon", None)
+        referent = action = value = None
+        order = []
+        for token in tokens:
+            known_referent = ledger.referent_for_signal(token) if ledger is not None else None
+            if known_referent is not None:
+                referent = known_referent
+                order.append("referent")
+                continue
+            known_action = ledger.action_for_signal(token) if ledger is not None else None
+            if known_action is not None:
+                action = known_action
+                order.append("action")
+                continue
+            digit = self.numeric_system.decode_token(token)
+            if digit is None:
+                return self._task_fail(task.get("task_id"))
+            value = digit
+            order.append("number")
+
+        return {
+            "agent_id": f"A{self.id}",
+            "referent": referent,
+            "action": action,
+            "value": value,
+            "order": tuple(order),
+            "utterance": data.get("signal", ""),
+            "confidence": 0.85 if all((referent, action, value is not None)) else 0.10,
         }
 
     # ------------------------------------------------------

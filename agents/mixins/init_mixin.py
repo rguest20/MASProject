@@ -81,6 +81,7 @@ class InitMixin:
         # Opaque world referents are internal task targets; agents attach their
         # own invented signals to them through referential tasks.
         self.referent_lexicon = {}
+        self.action_lexicon = {}
 
         # Numeric-symbol maps are agent-owned state.  Initialise them before
         # NumericSystem so both layers share the same mapping from the start.

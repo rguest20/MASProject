@@ -57,6 +57,28 @@ class SocialMixin:
             self.social_memory[pid] = rec
         return rec
 
+    def _trust_profile(self, partner_id):
+        """Return a complete channel profile, upgrading legacy scalar trust."""
+        raw = self.trust_channels.get(partner_id)
+        if not isinstance(raw, dict):
+            scalar = float(raw) if isinstance(raw, (int, float)) else 0.0
+            raw = {
+                "affinity": scalar,
+                "reliability": scalar,
+                "generosity": 0.0,
+                "competence": scalar,
+                "consistency": 0.0,
+                "collaboration": 0.0,
+                "safety": 0.0,
+            }
+            self.trust_channels[partner_id] = raw
+        for key in (
+            "affinity", "reliability", "generosity", "competence",
+            "consistency", "collaboration", "safety",
+        ):
+            raw.setdefault(key, 0.0)
+        return raw
+
     # ----------------------------------------------------
     # Interaction logging
     # ----------------------------------------------------
@@ -112,7 +134,7 @@ class SocialMixin:
         Adjust 7 sub-channels for this relationship.
         """
         reward = float(reward)
-        ch = self.trust_channels[partner_id]
+        ch = self._trust_profile(partner_id)
         lr = 0.08  # master learning rate
 
         # meaning-preserving multipliers
@@ -151,7 +173,7 @@ class SocialMixin:
         if hasattr(self, "reinforce_identity"):
             self.reinforce_identity(target_id, amount)
 
-        ch = self.trust_channels[target_id]
+        ch = self._trust_profile(target_id)
 
         # ----------------------------
         # Channel-specific update

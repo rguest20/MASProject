@@ -37,6 +37,34 @@ class NumericSystem:
         unique = set(tokens)
         return max(0, len(tokens) - len(unique))
 
+    def _community_numeric_token(self, digit):
+        ledger = getattr(self.owner, "community_lexicon", None)
+        if ledger is None or not hasattr(ledger, "numeric_token"):
+            return None
+        try:
+            return ledger.numeric_token(digit)
+        except Exception:
+            return None
+
+    def _community_numeric_conventions(self):
+        ledger = getattr(self.owner, "community_lexicon", None)
+        if ledger is None or not hasattr(ledger, "numeric_conventions"):
+            return {}
+        try:
+            return ledger.numeric_conventions()
+        except Exception:
+            return {}
+
+    def compact_against_community(self):
+        """Drop local entries that merely duplicate a promoted convention."""
+        compacted = {
+            digit: token
+            for digit, token in self.symbol_map.items()
+            if self._community_numeric_token(digit) != token
+        }
+        if len(compacted) != len(self.symbol_map):
+            self.set_symbol_map(compacted)
+
     def _fresh_symbol(self, reserved_tokens=None):
         """Create a token not already used by another digit in this system."""
         reserved = {str(token).strip().lower() for token in (reserved_tokens or []) if token}
@@ -50,6 +78,7 @@ class NumericSystem:
             for token in getattr(self, "symbol_map", {}).values()
             if token
         )
+        reserved.update(self._community_numeric_conventions().values())
 
         vowels = "aeiou"
         consonants = "bcdfghjklmnpqrstvwxyz"
@@ -103,7 +132,18 @@ class NumericSystem:
             if parts:
                 return self._decode_composite(parts)
 
-        # Direct known token
+        # A promoted convention is public evidence and takes precedence over a
+        # stale private association.
+        ledger = getattr(self.owner, "community_lexicon", None)
+        if ledger is not None and hasattr(ledger, "numeric_conventions"):
+            try:
+                for digit, public_token in ledger.numeric_conventions().items():
+                    if tok == public_token:
+                        return digit
+            except Exception:
+                pass
+
+        # Direct locally known token
         inv = self.inverse_symbol_map
         if tok in inv:
             return inv[tok]
@@ -194,11 +234,18 @@ class NumericSystem:
         """
         clean_map = {}
         used_tokens = set()
+        public_by_token = {
+            token: digit
+            for digit, token in self._community_numeric_conventions().items()
+        }
         for digit, token in (symbol_map or {}).items():
             if not isinstance(digit, int) or digit < 0:
                 continue
             token = str(token).strip().lower() if token is not None else ""
-            if not token or token in used_tokens:
+            reserved_for_other_digit = (
+                token in public_by_token and public_by_token[token] != digit
+            )
+            if not token or token in used_tokens or reserved_for_other_digit:
                 token = self._fresh_symbol(used_tokens)
             clean_map[digit] = token
             used_tokens.add(token)
@@ -240,26 +287,27 @@ class NumericSystem:
             self.inverse[token] = n
             self._register_numeric_token(token, digit=n)
 
-    def interpret(self, raw_number):
+    def interpret(self, raw_number, base=None):
         """
         Interpret an external integer (e.g., from challenge) using current base.
         Returns a list of component digits in this base.
         """
+        base = int(base) if isinstance(base, int) and base >= 2 else self.base
         if raw_number == 0:
             return [0]
         digits = []
         n = raw_number
         while n > 0:
-            digits.append(n % self.base)
-            n //= self.base
+            digits.append(n % base)
+            n //= base
         digits.reverse()
         return digits
 
-    def express(self, raw_number):
+    def express(self, raw_number, base=None):
         """
         Convert number → string form using internal symbols.
         """
-        digits = self.interpret(raw_number)
+        digits = self.interpret(raw_number, base=base)
         parts = [self.symbols.get(d, "?") for d in digits]
         return " ".join(parts)
 
@@ -398,9 +446,13 @@ class NumericSystem:
                     teacher_motivations = teacher.motivations
                 teacher_motivations["esteem"] = min(1.0, teacher_motivations.get("esteem", 0.5) + 0.02)
 
-    def speak_number(self, n):
+    def speak_number(self, n, base=None):
         try:
-            digits = self.interpret(n)
+            if base is None:
+                ledger = getattr(self.owner, "community_lexicon", None)
+                shared_base = ledger.community_base() if ledger is not None else None
+                base = shared_base or self.base
+            digits = self.interpret(n, base=base)
         except Exception:
             return str(n)
 
@@ -412,7 +464,10 @@ class NumericSystem:
 
         tokens = []
         for d in digits:
-            if d in self.symbol_map:
+            public_token = self._community_numeric_token(d)
+            if public_token:
+                tok = public_token
+            elif d in self.symbol_map:
                 tok = self.symbol_map[d]
             else:
                 try:

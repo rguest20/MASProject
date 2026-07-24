@@ -92,7 +92,6 @@ class LanguageMixin:
             min(0.9, 0.15 + 0.3 * express + float(self._emotion_mod_punct())),
         )
 
-        syll_pool = list(SYLLABLES)
         invented_pool = [
             t for t in getattr(self, "vocab", set())
             if t not in SYLLABLES and not self._is_identity_like(t)
@@ -100,7 +99,30 @@ class LanguageMixin:
 
         sem = getattr(self, "semantic", {}) or {}
         concept_tokens = set((sem.get("concept_tokens", {}) or {}).values())
-        all_tokens = (set(syll_pool) | set(invented_pool)) - concept_tokens
+        # Production is deliberately a small active lexicon, not the full
+        # inherited token warehouse.  Shared conventions and recently useful
+        # private tokens get priority; unsupported vocabulary remains stored
+        # but stops injecting random noise into every utterance.
+        prefs = self.utter_bias["symbol_preferences"]
+        ledger = getattr(self, "community_lexicon", None)
+        public_tokens = set()
+        if ledger is not None:
+            try:
+                public_tokens.update(ledger.numeric_conventions().values())
+                public_tokens.update(ledger.referential_conventions().values())
+                public_tokens.update(ledger.action_conventions().values())
+            except Exception:
+                pass
+        recent = [
+            token for token in getattr(self, "recent_tokens", [])[-40:]
+            if isinstance(token, str) and token.strip() and not self._is_identity_like(token)
+        ]
+        ranked_private = sorted(
+            set(invented_pool),
+            key=lambda token: prefs.get(token, 0.2),
+            reverse=True,
+        )[:48]
+        all_tokens = (public_tokens | set(recent) | set(ranked_private)) - concept_tokens
 
         if hasattr(self, "symbol_map"):
             all_tokens |= (set(getattr(self, "symbol_map", {}).values()) - concept_tokens)
@@ -111,6 +133,8 @@ class LanguageMixin:
             t for t in all_tokens
             if isinstance(t, str) and t.strip() and not self._is_identity_like(t)
         }
+        if len(all_tokens) < 12:
+            all_tokens.update(sorted(SYLLABLES)[:12])
         all_tokens.add("why")
 
         if hasattr(self, "semantic_system"):
@@ -126,7 +150,6 @@ class LanguageMixin:
             mem[utter] = mem.get(utter, 0) + 1
             return utter
 
-        prefs = self.utter_bias["symbol_preferences"]
         for t in all_tokens:
             prefs.setdefault(t, 0.2)
         for w in invented_pool:

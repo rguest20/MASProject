@@ -36,9 +36,23 @@ def _get_log_filenames(coordinator):
 # -----------------------------
 # Utility: cultural signature
 # -----------------------------
+def effective_numeric_map(agent):
+    """Merge promoted public conventions with an agent's private overlay."""
+    mapping = {}
+    ledger = getattr(agent, "community_lexicon", None)
+    if ledger is not None and hasattr(ledger, "numeric_conventions"):
+        try:
+            mapping.update(ledger.numeric_conventions())
+        except Exception:
+            pass
+    for digit, token in (getattr(agent, "symbol_map", {}) or {}).items():
+        mapping.setdefault(digit, token)
+    return mapping
+
+
 def compute_cultural_signature(agent):
     base = getattr(agent.counting, "base", 10)
-    mapping = getattr(agent, "symbol_map", {}) or {}
+    mapping = effective_numeric_map(agent)
     symbols = [str(mapping.get(d, "?")) for d in range(base)]
     raw = f"{base}-{'-'.join(symbols)}"
     return hashlib.md5(raw.encode()).hexdigest()[:8]
@@ -48,9 +62,9 @@ def _numeric_alignment_scores(agents):
     """Pairwise agreement scores over shared digit-to-token mappings."""
     scores = []
     for index, left in enumerate(agents):
-        left_map = getattr(left, "symbol_map", {}) or {}
+        left_map = effective_numeric_map(left)
         for right in agents[index + 1:]:
-            right_map = getattr(right, "symbol_map", {}) or {}
+            right_map = effective_numeric_map(right)
             shared = set(left_map) & set(right_map)
             if shared:
                 scores.append(sum(left_map[d] == right_map[d] for d in shared) / len(shared))
@@ -64,26 +78,35 @@ def compute_numeric_alignment(agents):
 
 
 def compute_numeric_map_health(agents):
-    """Measure coverage and injectivity of each agent's active numeral map."""
-    coverages = []
+    """Measure coverage and injectivity of maps agents actually use."""
+    effective_coverages = []
+    overlay_coverages = []
     injectivities = []
+    collisions = []
     for agent in agents:
         base = max(1, getattr(getattr(agent, "counting", None), "base", 10))
-        mapping = getattr(agent, "symbol_map", {}) or {}
+        overlay = getattr(agent, "symbol_map", {}) or {}
+        mapping = effective_numeric_map(agent)
+        overlay_coverages.append(sum(bool(overlay.get(d)) for d in range(base)) / base)
         tokens = [mapping[d] for d in range(base) if mapping.get(d)]
-        coverages.append(len(tokens) / base)
+        effective_coverages.append(len(tokens) / base)
         injectivities.append(len(set(tokens)) / len(tokens) if tokens else 1.0)
+        collisions.append(len(tokens) - len(set(tokens)))
     return (
-        statistics.mean(coverages) if coverages else 0.0,
+        statistics.mean(effective_coverages) if effective_coverages else 0.0,
+        statistics.mean(overlay_coverages) if overlay_coverages else 0.0,
         statistics.mean(injectivities) if injectivities else 1.0,
+        statistics.mean(collisions) if collisions else 0.0,
     )
 
 
 def compute_grounding_task_metrics(tasks):
     """Summarise attempts, answers, and correct answers by grounding task."""
     groups = {
-        "numeric": {"reconcile_counts", "translate_number"},
+        "numeric": {"reconcile_counts", "translate_number", "translate_quantity"},
         "referential": {"referential_signal"},
+        "action": {"action_signal"},
+        "compositional": {"compositional_signal", "compositional_action_signal"},
     }
     totals = {
         name: {"tasks": 0, "assigned": 0, "attempted": 0, "answered": 0, "correct": 0}
@@ -129,7 +152,17 @@ def compute_generation_summary(coordinator):
     mean_align = sum(alignment_scores) / len(alignment_scores) if alignment_scores else 0.0
     std_align = statistics.pstdev(alignment_scores) if len(alignment_scores) > 1 else 0.0
     align_div = len({compute_cultural_signature(a) for a in agents})
-    numeric_coverage, numeric_injectivity = compute_numeric_map_health(agents)
+    numeric_coverage, overlay_coverage, numeric_injectivity, numeric_collisions = compute_numeric_map_health(agents)
+    ledger = getattr(coordinator, "community_lexicon", None)
+    community_numeric = len(ledger.numeric_conventions()) if ledger is not None else 0
+    community_referential = len(ledger.referential_conventions()) if ledger is not None else 0
+    community_action = len(ledger.action_conventions()) if ledger is not None else 0
+    community_base = ledger.community_base() if ledger is not None else None
+    community_grammar = len(ledger.grammar_conventions()) if ledger is not None else 0
+    dialogue_metrics = getattr(coordinator, "dialogue_metrics", {}) or {}
+    conversation_metrics = getattr(
+        getattr(coordinator, "community_conversation", None), "metrics", {}
+    ) or {}
 
     mean_energy = statistics.mean(a.energy for a in agents)
     mean_fitness = statistics.mean(a.total_fitness for a in agents)
@@ -176,11 +209,29 @@ def compute_generation_summary(coordinator):
         "mean_fitness": mean_fitness,
         "mean_task_fitness": statistics.mean(getattr(a, "task_fitness", 0.0) for a in agents),
         "numeric_map_coverage": numeric_coverage,
+        "local_numeric_overlay_coverage": overlay_coverage,
         "numeric_map_injectivity": numeric_injectivity,
+        "effective_numeric_map_collisions": numeric_collisions,
+        "community_numeric_conventions": community_numeric,
+        "community_referential_conventions": community_referential,
+        "community_action_conventions": community_action,
+        "community_numeric_base": community_base or 0,
+        "community_grammar_conventions": community_grammar,
         "vocab_size_mean": vocab_mean,
         "base_diversity": base_div,
         "cluster_diversity": cluster_div,
         "top_clusters": top_clusters,
+        "dialogue_pairs": int(dialogue_metrics.get("pairs", 0)),
+        "dialogue_turns": int(dialogue_metrics.get("turns", 0)),
+        "grounded_dialogue_turns": int(dialogue_metrics.get("grounded_turns", 0)),
+        "grounded_dialogue_exchanges": int(dialogue_metrics.get("grounded_exchanges", 0)),
+        "grounded_dialogue_successes": int(dialogue_metrics.get("grounded_successes", 0)),
+        "teaching_dialogue_exchanges": int(dialogue_metrics.get("teaching_exchanges", 0)),
+        "free_dialogue_turns": int(dialogue_metrics.get("free_turns", 0)),
+        "conversation_pending": int(conversation_metrics.get("pending", 0)),
+        "conversation_answers": int(conversation_metrics.get("answers", 0)),
+        "conversation_last_agreement": float(conversation_metrics.get("last_agreement", 0.0)),
+        "conversation_free_answers": int(conversation_metrics.get("free_answers", 0)),
     }
     data.update(compute_grounding_task_metrics(getattr(coordinator, "active_tasks", []) or []))
     if "_last_need_data" in globals():
@@ -222,8 +273,9 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
     """
     Full text version of the previous print_stats + rich_generation_log.
     """
-    # ensure file at filename is empty at start of new block
-    if (generation_index -1) % LOG_ROTATE_INTERVAL == 0:
+    # Runs already have isolated directories, so never discard earlier
+    # generations merely because a long experiment crossed a log block.
+    if generation_index == 1 and not os.path.exists(filename):
         with open(filename, "w") as f:
             f.write(f"Generation Report Log\nStarted at {time.ctime()}\n")
 
@@ -248,6 +300,28 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
         f.write(f"   Unique utterances: {len(counts)}\n")
         f.write(f"Challenge this gen: {coordinator.challenge.challenge_value} "
                 f"({coordinator.challenge.challenge_name()})\n")
+        dialogue_metrics = getattr(coordinator, "dialogue_metrics", {}) or {}
+        if dialogue_metrics:
+            exchanges = int(dialogue_metrics.get("grounded_exchanges", 0))
+            successes = int(dialogue_metrics.get("grounded_successes", 0))
+            f.write(
+                "   Grounded chat: "
+                f"{successes}/{exchanges} understood; "
+                f"teaching={int(dialogue_metrics.get('teaching_exchanges', 0))}; "
+                f"free turns={int(dialogue_metrics.get('free_turns', 0))}\n"
+            )
+        conversation_metrics = getattr(
+            getattr(coordinator, "community_conversation", None), "metrics", {}
+        ) or {}
+        if conversation_metrics.get("pending") or conversation_metrics.get("answers"):
+            f.write(
+                "   Conversation bridge: "
+                f"status={conversation_metrics.get('last_status', 'idle')}; "
+                f"pending={int(conversation_metrics.get('pending', 0))}; "
+                f"answers={int(conversation_metrics.get('answers', 0))}; "
+                f"free={int(conversation_metrics.get('free_answers', 0))}; "
+                f"agreement={float(conversation_metrics.get('last_agreement', 0.0)):.2f}\n"
+            )
 
         # Tail of notes
         try:
@@ -337,11 +411,23 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                 f"min={min(energies):.2f} max={max(energies):.2f}\n")
 
         # Symbol maps
-        f.write("\nNumeric Symbol Maps (sample of 3 agents):\n")
+        ledger = getattr(coordinator, "community_lexicon", None)
+        if ledger is not None:
+            f.write(
+                "\nPublic Conventions: "
+                f"numeric={ledger.numeric_conventions()} "
+                f"referential={ledger.referential_conventions()} "
+                f"actions={ledger.action_conventions()} "
+                f"base={ledger.community_base()} "
+                f"grammar={ledger.grammar_conventions()}\n"
+            )
+
+        f.write("\nEffective Numeric Symbol Maps (sample of 3 agents):\n")
         sample_agents = random.sample(coordinator.agents, min(3, len(coordinator.agents)))
         for ag in sample_agents:
-            if getattr(ag, "symbol_map", None):
-                pairs = list(ag.symbol_map.items())
+            sm = effective_numeric_map(ag)
+            if sm:
+                pairs = list(sm.items())
                 pairs_str = ", ".join(f"{k}->{v}" for k, v in pairs)
                 f.write(f"  A{ag.id}: {pairs_str}\n")
 
@@ -441,9 +527,12 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                 # =========================================================
                 # TASK TYPE: reconcile_counts
                 # =========================================================
-                elif ttype in {"reconcile_counts", "translate_number"}:
+                elif ttype in {"reconcile_counts", "translate_number", "translate_quantity"}:
                     target = task.get("value")
-                    f.write(f"  target={target} views={task.get('views', {})}\n")
+                    f.write(
+                        f"  target={target} base={task.get('numeric_base')} "
+                        f"views={task.get('views', {})}\n"
+                    )
 
                     for r in responses:
                         result = r.get("normalized")
@@ -463,6 +552,55 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                         f.write(
                             f"  Agent {r['agent_id']}: referent={result!r} "
                             f"confidence={r.get('confidence', 0.0):.2f} ({outcome})\n"
+                        )
+
+                elif ttype == "action_signal":
+                    task_data = task.get("data", {}) or {}
+                    target = task_data.get("action")
+                    f.write(f"  signal='{task_data.get('signal', '')}' target={target}\n")
+                    for r in responses:
+                        outcome = "correct" if r.get("action") == target else "wrong"
+                        f.write(
+                            f"  Agent {r['agent_id']}: action={r.get('action')!r} "
+                            f"confidence={r.get('confidence', 0.0):.2f} ({outcome})\n"
+                        )
+
+                elif ttype == "compositional_signal":
+                    task_data = task.get("data", {}) or {}
+                    f.write(
+                        f"  signal='{task_data.get('signal', '')}' "
+                        f"target=({task_data.get('referent')}, {task_data.get('value')})\n"
+                    )
+                    for r in responses:
+                        outcome = (
+                            "correct"
+                            if r.get("referent") == task_data.get("referent")
+                            and r.get("value") == task_data.get("value")
+                            else "wrong"
+                        )
+                        f.write(
+                            f"  Agent {r['agent_id']}: referent={r.get('referent')!r} "
+                            f"value={r.get('value')} order={r.get('order')} ({outcome})\n"
+                        )
+
+                elif ttype == "compositional_action_signal":
+                    task_data = task.get("data", {}) or {}
+                    f.write(
+                        f"  signal='{task_data.get('signal', '')}' target="
+                        f"({task_data.get('referent')}, {task_data.get('action')}, {task_data.get('value')})\n"
+                    )
+                    for r in responses:
+                        outcome = (
+                            "correct"
+                            if r.get("referent") == task_data.get("referent")
+                            and r.get("action") == task_data.get("action")
+                            and r.get("value") == task_data.get("value")
+                            else "wrong"
+                        )
+                        f.write(
+                            f"  Agent {r['agent_id']}: referent={r.get('referent')!r} "
+                            f"action={r.get('action')!r} value={r.get('value')} "
+                            f"order={r.get('order')} ({outcome})\n"
                         )
 
                 # =========================================================

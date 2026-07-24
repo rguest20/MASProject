@@ -1,0 +1,46 @@
+# Write a completed Ryan line below and save the file.  In watch mode the
+# community will append one answer after a short thinking period, followed by
+# a new blank Ryan prompt.  It currently understands controlled forms:
+#
+# Any other Ryan sentence, including "Hello", is passed to the community as
+# exploratory tokens.  It will answer in its own learned language rather than
+# with a hard-coded English reply.
+#
+# Ryan: Hello
+# Ryan: Help
+# Ryan: How many is 12?
+# Ryan: Show r3
+# Ryan: Do a2 to r3 with 4
+# Ryan: Teach r3 is apple
+# Ryan: Teach a2 means move
+# Ryan: What did you do?
+
+Ryan: Hello
+Community: Hello Ryan. I can answer number questions, show learned referents, compose actions, and learn aliases you teach me. Type 'help' for forms.
+Ryan: Hello
+Community: Hello Ryan. I can answer number questions, show learned referents, compose actions, and learn aliases you teach me. Type 'help' for forms.
+Ryan: Hello
+Community: hello ja katol
+Ryan: How are you?
+Community: how nau katol sutol
+Ryan: what is katol
+Community: what nau kalo sutol
+Ryan: hello 
+Community: hello ja kabel kamuk
+Ryan: hello ja
+Community: hello yu zevtar sutol
+Ryan: can you do things
+Community: can ja zevtar sutol
+Ryan: repeated words
+Community: repeated nau kabel kamuk
+Ryan: hello there
+Community: hello se kalo sutol
+Ryan: I would like to greet you
+Community: i ta vaktar sutol
+Ryan: can you use hello in a sentence
+Community: can cu kabel kamuk
+Ryan: you're trying to figure it out, eh?
+Community: you're xe vaktar kaka
+Ryan: we're running out of time
+Community: we're ta kalo sutol
+Ryan: 

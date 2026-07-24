@@ -345,7 +345,12 @@ class CoordinatorLanguageMixin:
 
         for a in self.agents:
             try:
-                utt = a.produce_utterance()
+                # Broadcasts should rehearse the language that agents can
+                # actually use together.  Before conventions exist we retain
+                # exploratory speech; afterwards a broadcast is a compact,
+                # interpretable practice act rather than random token salad.
+                act = self._grounded_dialogue_act(a, listener=None)
+                utt = act["signal"] if act is not None else a.produce_utterance()
                 self.last_utterances[a.id] = utt
                 if a.id in self.agent_apis:
                     self.agent_apis[a.id].append_text("/notes.txt", f"A{a.id}: {utt}\n", scope="world")
@@ -372,9 +377,133 @@ class CoordinatorLanguageMixin:
         self.gossip_exchange()
         self.semantic_teaching_phase()
 
+    def _grounded_dialogue_act(self, speaker, listener=None):
+        """Create one short, interpretable social-language act.
+
+        The protocol deliberately uses only the conventions agents have
+        already earned through grounded tasks.  Free conversation therefore
+        rehearses a shared language without silently creating a new oracle
+        channel.  As the inventory grows it progresses from numerals, to
+        referent-number descriptions, to referent-action-number requests.
+        """
+        ledger = getattr(self, "community_lexicon", None)
+        if ledger is None:
+            return None
+
+        numeric = ledger.numeric_conventions()
+        referential = ledger.referential_conventions()
+        actions = ledger.action_conventions()
+        if not numeric and not referential:
+            return None
+
+        teaching_drive = float(getattr(speaker, "traits", {}).get("teaching_drive", 0.0))
+        learner_curiosity = float(getattr(listener, "traits", {}).get("curiosity", 0.0)) if listener else 0.0
+        intent = "teach" if listener and random.random() < (0.15 + 0.35 * teaching_drive + 0.15 * learner_curiosity) else "practice"
+
+        if numeric and referential and actions:
+            order = ledger.grammar_order("referent_action_number")
+            if order:
+                referent, referent_token = random.choice(list(referential.items()))
+                action, action_token = random.choice(list(actions.items()))
+                value, number_token = random.choice(list(numeric.items()))
+                tokens = {
+                    "referent": referent_token,
+                    "action": action_token,
+                    "number": number_token,
+                }
+                return {
+                    "intent": intent,
+                    "kind": "compositional_action_signal",
+                    "signal": " ".join(tokens[role] for role in order),
+                    "meaning": {"referent": referent, "action": action, "value": value},
+                }
+
+        if numeric and referential:
+            order = ledger.grammar_order("referent_quantity")
+            if order:
+                referent, referent_token = random.choice(list(referential.items()))
+                value, number_token = random.choice(list(numeric.items()))
+                tokens = {"referent": referent_token, "number": number_token}
+                return {
+                    "intent": intent,
+                    "kind": "compositional_signal",
+                    "signal": " ".join(tokens[role] for role in order),
+                    "meaning": {"referent": referent, "value": value},
+                }
+
+        if numeric:
+            value, token = random.choice(list(numeric.items()))
+            return {
+                "intent": intent,
+                "kind": "number_practice",
+                "signal": token,
+                "meaning": {"value": value},
+            }
+
+        referent, token = random.choice(list(referential.items()))
+        return {
+            "intent": intent,
+            "kind": "referent_practice",
+            "signal": token,
+            "meaning": {"referent": referent},
+        }
+
+    def _interpret_grounded_dialogue_act(self, listener, act):
+        """Return whether a listener recovered the intended grounded meaning."""
+        if act is None:
+            return False
+        kind = act.get("kind")
+        signal = act.get("signal", "")
+        meaning = act.get("meaning", {})
+        task_system = getattr(listener, "task_system", None)
+
+        try:
+            if kind == "compositional_action_signal" and task_system is not None:
+                response = task_system._solve_compositional_action_signal({"data": {"signal": signal}})
+                return bool(response and all(response.get(key) == value for key, value in meaning.items()))
+            if kind == "compositional_signal" and task_system is not None:
+                response = task_system._solve_compositional_signal({"data": {"signal": signal}})
+                return bool(response and all(response.get(key) == value for key, value in meaning.items()))
+            if kind == "number_practice":
+                return listener.numeric_system.decode_token(signal) == meaning.get("value")
+            if kind == "referent_practice":
+                ledger = getattr(listener, "community_lexicon", None)
+                return ledger is not None and ledger.referent_for_signal(signal) == meaning.get("referent")
+        except Exception:
+            return False
+        return False
+
+    def _reward_grounded_dialogue(self, speaker, listener, act, understood):
+        """Give small social/learning consequences to successful practice."""
+        if understood:
+            bonus = 0.05 if act.get("intent") == "teach" else 0.03
+            speaker.own_fitness += bonus
+            listener.own_fitness += bonus
+            speaker.energy = min(100.0, speaker.energy + 0.05)
+            listener.energy = min(100.0, listener.energy + 0.05)
+            speaker.adjust_trust(listener.id, amount=0.015, channel=3)
+            listener.adjust_trust(speaker.id, amount=0.025, channel=4)
+            speaker.remember_interaction(listener.id, outcome=bonus, gen_index=self.generation_index)
+            listener.remember_interaction(speaker.id, outcome=bonus, gen_index=self.generation_index)
+            if act.get("intent") == "teach":
+                speaker.teaching_attempted = True
+                listener.teaching_attempted = True
+        else:
+            speaker.adjust_trust(listener.id, amount=-0.005, channel=4)
+            listener.adjust_trust(speaker.id, amount=-0.01, channel=4)
+
     def run_dialogues(self, max_pairs_per_gen=30, max_turns_per_pair=2):
         if not hasattr(self, "dialogue_log"):
             self.dialogue_log = []
+        self.dialogue_metrics = {
+            "pairs": 0,
+            "turns": 0,
+            "grounded_turns": 0,
+            "grounded_exchanges": 0,
+            "grounded_successes": 0,
+            "teaching_exchanges": 0,
+            "free_turns": 0,
+        }
 
         proposed_pairs = set()
         for agent in self.agents:
@@ -403,25 +532,53 @@ class CoordinatorLanguageMixin:
             room_turns = []
             last_utter = None
             last_speaker_id = None
-
             speaker_order = [a, b] * max_turns_per_pair
 
-            for speaker in speaker_order:
+            # Two compact exchanges give each participant a chance to request
+            # practice/teaching and to acknowledge an interpretable message.
+            # The old alternation generated unrelated utterances each turn.
+            acts = [
+                self._grounded_dialogue_act(a, b),
+                self._grounded_dialogue_act(b, a),
+            ]
+            act_index = 0
+            active_act = None
+
+            for turn_index, speaker in enumerate(speaker_order):
                 listener = b if speaker is a else a
 
-                if last_utter is not None and last_speaker_id != listener.id:
+                if last_utter is not None and last_speaker_id != speaker.id:
                     try:
-                        listener.receive_message(last_speaker_id, last_utter)
+                        # The current speaker is the recipient of the prior
+                        # turn.  This was previously (and silently) delivered
+                        # back to the previous speaker instead.
+                        speaker.receive_message(last_speaker_id, last_utter)
                     except Exception:
                         pass
 
-                try:
-                    if hasattr(speaker, "produce_addressed_utterance"):
-                        utter = speaker.produce_addressed_utterance(listener)
-                    else:
-                        utter = speaker.produce_utterance()
-                except Exception:
-                    utter = None
+                understood = None
+                if turn_index % 2 == 0:
+                    active_act = acts[act_index % len(acts)]
+                    act_index += 1
+                    utter = active_act["signal"] if active_act is not None else None
+                elif active_act is not None:
+                    understood = self._interpret_grounded_dialogue_act(speaker, active_act)
+                    self._reward_grounded_dialogue(listener, speaker, active_act, understood)
+                    self.dialogue_metrics["grounded_exchanges"] += 1
+                    self.dialogue_metrics["grounded_successes"] += int(understood)
+                    self.dialogue_metrics["teaching_exchanges"] += int(active_act.get("intent") == "teach")
+                    # A successful acknowledgement mirrors the learnable form;
+                    # on failure the learner falls back to its own expression.
+                    utter = active_act["signal"] if understood else None
+
+                if not utter:
+                    try:
+                        if hasattr(speaker, "produce_addressed_utterance"):
+                            utter = speaker.produce_addressed_utterance(listener)
+                        else:
+                            utter = speaker.produce_utterance()
+                    except Exception:
+                        utter = None
 
                 if not utter:
                     utter = ""
@@ -434,13 +591,23 @@ class CoordinatorLanguageMixin:
                     "speaker_id": speaker.id,
                     "listener_id": listener.id,
                     "utterance": utter,
+                    "intent": active_act.get("intent") if active_act is not None else "free",
+                    "kind": active_act.get("kind") if active_act is not None else "free",
+                    "meaning": active_act.get("meaning") if active_act is not None else None,
+                    "understood": understood,
                 })
+                self.dialogue_metrics["turns"] += 1
+                if active_act is not None:
+                    self.dialogue_metrics["grounded_turns"] += 1
+                else:
+                    self.dialogue_metrics["free_turns"] += 1
 
             self.dialogue_log.append({
                 "generation": getattr(self, "generation_index", None),
                 "pair": (a_id, b_id),
                 "turns": room_turns[-10:],
             })
+            self.dialogue_metrics["pairs"] += 1
 
         if len(self.dialogue_log) > 5000:
             self.dialogue_log = self.dialogue_log[-5000:]
@@ -450,7 +617,16 @@ class CoordinatorLanguageMixin:
             for d in self.dialogue_log[-5:]:
                 f.write(f"Gen {d['generation']} Pair {d['pair']}\n")
                 for t in d["turns"]:
-                    f.write(f"  A{t['speaker_id']} → A{t['listener_id']}: {t['utterance']}\n")
+                    annotation = ""
+                    if t.get("kind") and t.get("kind") != "free":
+                        annotation = f" [{t['intent']} {t['kind']}"
+                        if t.get("meaning"):
+                            meaning = ",".join(f"{key}={value}" for key, value in t["meaning"].items())
+                            annotation += f" meaning={meaning}"
+                        if t.get("understood") is not None:
+                            annotation += f" understood={t['understood']}"
+                        annotation += "]"
+                    f.write(f"  A{t['speaker_id']} → A{t['listener_id']}: {t['utterance']}{annotation}\n")
                 f.write("\n")
 
     def summarize_dialogues(self, last_n=100):
