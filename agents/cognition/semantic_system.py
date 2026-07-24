@@ -243,30 +243,6 @@ class SemanticSystem:
         return out
 
     # -----------------------------------------------------
-    # Similarity utilities
-    # -----------------------------------------------------
-    def similarity(self, a, b) -> float:
-        """Cosine similarity between two semantic tokens (0.0 if missing)."""
-        vecs = self.vectors
-        if a not in vecs or b not in vecs:
-            return 0.0
-        va = vecs[a]
-        vb = vecs[b]
-        if not isinstance(va, (list, tuple)) or not isinstance(vb, (list, tuple)):
-            return 0.0
-        va = np.array(va, dtype=float)
-        vb = np.array(vb, dtype=float)
-        na = np.linalg.norm(va)
-        nb = np.linalg.norm(vb)
-        if na == 0.0 or nb == 0.0:
-            return 0.0
-        return float(np.dot(va, vb) / (na * nb))
-
-    def distance(self, a, b) -> float:
-        """Semantic distance = 1 - similarity."""
-        return 1.0 - float(self.similarity(a, b))
-
-    # -----------------------------------------------------
     # Flavour / latent attractors
     # -----------------------------------------------------
     def _ensure_flavour_entry(self, tok):

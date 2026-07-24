@@ -1,6 +1,7 @@
 # agents/agent.py
 
 from agents.agent_base import AgentBase
+from agents.cognition.task_system_v2 import TaskSystemV2
 
 # Mixins
 from agents.mixins.init_mixin import InitMixin
@@ -16,8 +17,6 @@ from agents.mixins.mutation_mixin import MutationMixin
 from agents.mixins.sandbox_mixin import SandboxMixin
 from agents.mixins.needs_mixin import NeedsMixin
 from agents.mixins.util_mixin import UtilMixin
-from agents.mixins.task_mixin import TaskMixin
-from agents.mixins.task_mixin_v2 import TaskMixinV2
 from agents.mixins.reasoning_mixin import ReasoningMixin  # DecisionMixin provides reasoning
 
 class Agent(
@@ -35,14 +34,14 @@ class Agent(
     TeachingMixin,
     MutationMixin,
     SandboxMixin,
-    TaskMixinV2,
     AgentBase,        # Base last
 ):
     """
     Final unified Agent class.
 
-    All behavioural, cognitive, emotional, linguistic,
-    social, and evolutionary machinery lives in mixins.
+    Behavioural, emotional, linguistic, social, and evolutionary concerns are
+    supplied by mixins. Dedicated cognitive systems, such as task solving,
+    are owned directly by the agent.
 
     AgentBase provides:
       • id
@@ -52,13 +51,27 @@ class Agent(
       • counting system
       • basic fitness scoring
 
-    Mixins provide everything else.
+    Mixins provide the remaining compatibility and behavioural surfaces.
     """
 
     def __init__(self, id, token_registry, api=None):
         super().__init__(id)
         self.token_registry = token_registry
         self._post_init()
+
+    def _init_task_system(self):
+        """Create the agent-owned task system.
+
+        ``task_system_v2`` remains as a compatibility alias while callers
+        migrate to the versionless ``task_system`` attribute.
+        """
+        self.task_system = TaskSystemV2(owner=self)
+        self.task_system_v2 = self.task_system
+        self.task_system._init_task_system()
+
+    def try_solve_tasks(self, task_list, generation_index):
+        """Delegate task execution to this agent's task system."""
+        return self.task_system.try_solve_tasks(task_list, generation_index)
 
 
     def debug_dump_semantics(self, limit=200):

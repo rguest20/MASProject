@@ -907,16 +907,8 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         # Agents attempt tasks
         for ag in self.agents:
-            if hasattr(ag, "task_system_v2"):
-                ag.task_system_v2.try_solve_tasks(self.active_tasks, self.generation_index)
-
-        # -------------------------------------------------------
-        # TASK SOLVING (legacy fallback)
-        # -------------------------------------------------------
-        # if hasattr(self, "active_tasks") and self.active_tasks:
-        #     for a in self.agents:
-        #         if hasattr(a, "task_system_v2"):
-        #             a.task_system_v2.try_solve_tasks(self.active_tasks, self.generation_index)
+            if hasattr(ag, "try_solve_tasks"):
+                ag.try_solve_tasks(self.active_tasks, self.generation_index)
 
         # -------------------------------------------------------
         # POST-TASK EVALUATION
@@ -1415,55 +1407,6 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
                     ag.memory.setdefault("semantic_alignment_proposals", 0.0)
                     ag.memory["semantic_alignment_proposals"] += bonus
                     break
-
-    # =====================================================
-    # COMMUNITY SEMANTIC MAP (MIXED STRENGTH, MODE C)
-    # =====================================================
-    def _compute_token_stats(self, token):
-        """
-        For a given token, gather all agent vectors and compute:
-          - mean vector
-          - mean distance to the mean
-          - coverage (fraction of agents that know it)
-        """
-        vecs = []
-        for ag in self.agents:
-            sem = getattr(ag, "semantic", None)
-            if not sem:
-                continue
-            v = sem.get("vecs", {}).get(token)
-            if v is None:
-                continue
-            vecs.append((ag.id, np.array(v, dtype=float)))
-
-        if not vecs:
-            return None, 0.0, 0.0
-
-        arr = np.stack([v for (_, v) in vecs], axis=0)
-        mean_vec = arr.mean(axis=0)
-
-        dists = np.linalg.norm(arr - mean_vec, axis=1)
-        mean_dist = float(dists.mean()) if len(dists) > 0 else 0.0
-
-        coverage = len(vecs) / max(1, len(self.agents))
-
-        return mean_vec, mean_dist, coverage
-
-    def _community_token_confidence(self, mean_dist, coverage):
-        """
-        Confidence in [0,1]:
-          - higher when many agents agree (coverage high)
-          - higher when they are close together (mean_dist small)
-        """
-        # distance factor: ~1 when dist=0, decays with distance
-        dist_factor = 1.0 / (1.0 + 0.5 * mean_dist)
-        dist_factor = max(0.0, min(1.0, dist_factor))
-
-        cov_factor = max(0.0, min(1.0, coverage))
-
-        # combine, slightly emphasise agreement
-        conf = (0.6 * cov_factor + 0.4 * dist_factor)
-        return max(0.0, min(1.0, conf))
 
     # =======================================================
     # COMMUNITY SEMANTIC MAP (MIXED STRENGTH, MODE C)

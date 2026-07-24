@@ -21,24 +21,6 @@ class EpistemicSystem:
         }
         self.flavour_homeostasis = {}
 
-    # -------------------------------------------------
-    # Semantic snapshot export (for community analysis)
-    # -------------------------------------------------
-    def export_semantic_snapshot(self, k: int = 200):
-        vecs = getattr(self.owner.semantic_system, "vectors", {})
-        tokens = getattr(self.owner.semantic_system, "tokens", {})
-        if not vecs:
-            return {}
-
-        scored = []
-        for tok in vecs.keys():
-            meta = tokens.get(tok, {})
-            scored.append((tok, meta.get("usage_count", 0)))
-
-        scored.sort(key=lambda x: x[1], reverse=True)
-        selected = [tok for tok, _ in scored[:k]]
-        return {tok: vecs[tok] for tok in selected}
-
     def community_distance(self, tok, community_map):
         if not community_map:
             return None
