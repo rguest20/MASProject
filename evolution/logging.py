@@ -164,6 +164,7 @@ def compute_generation_summary(coordinator):
     conversation_metrics = getattr(
         getattr(coordinator, "community_conversation", None), "metrics", {}
     ) or {}
+    learning_metrics = getattr(coordinator, "community_learning_metrics", {}) or {}
 
     mean_energy = statistics.mean(a.energy for a in agents)
     mean_fitness = statistics.mean(a.total_fitness for a in agents)
@@ -234,6 +235,37 @@ def compute_generation_summary(coordinator):
         "conversation_answers": int(conversation_metrics.get("answers", 0)),
         "conversation_last_agreement": float(conversation_metrics.get("last_agreement", 0.0)),
         "conversation_free_answers": int(conversation_metrics.get("free_answers", 0)),
+        "conversation_mode": str(conversation_metrics.get("mode", "introduction")),
+        "conversation_active_topic": str(conversation_metrics.get("active_topic", "")),
+        "conversation_input_intent": str(conversation_metrics.get("last_input_intent", "")),
+        "conversation_reply_intent": str(conversation_metrics.get("last_reply_intent", "")),
+        "conversation_mode_agreement": float(conversation_metrics.get("last_mode_agreement", 0.0)),
+        "conversation_repeat_penalty": float(conversation_metrics.get("last_repeat_penalty", 0.0)),
+        "conversation_working_topic": str(conversation_metrics.get("working_topic", "")),
+        "conversation_parked_frames": int(conversation_metrics.get("parked_frames", 0)),
+        "conversation_memory_action": str(conversation_metrics.get("last_memory_action", "idle")),
+        "conversation_positive_feedback": int(conversation_metrics.get("positive_feedback", 0)),
+        "conversation_negative_feedback": int(conversation_metrics.get("negative_feedback", 0)),
+        "conversation_last_feedback": str(conversation_metrics.get("last_feedback", "")),
+        "conversation_english_bigrams": int(conversation_metrics.get("english_bigrams", 0)),
+        "conversation_promoted_bigrams": int(conversation_metrics.get("promoted_bigrams", 0)),
+        "conversation_meaning_tokens": int(conversation_metrics.get("meaning_tokens", 0)),
+        "conversation_meaning_bigrams": int(conversation_metrics.get("meaning_bigrams", 0)),
+        "conversation_world_edges": int(conversation_metrics.get("world_edges", 0)),
+        "conversation_world_confirmed_edges": int(conversation_metrics.get("world_confirmed_edges", 0)),
+        "community_discomfort": float(learning_metrics.get("discomfort", 0.0)),
+        "community_quiet_streak": int(learning_metrics.get("quiet_streak", 0)),
+        "community_stagnation_streak": int(learning_metrics.get("stagnation_streak", 0)),
+        "community_wrong_attempt_rate": float(learning_metrics.get("wrong_attempt_rate", 0.0)),
+        "reading_sentences": int(learning_metrics.get("reading_sentences", 0)),
+        "reading_new_tokens": int(learning_metrics.get("reading_new_tokens", 0)),
+        "reading_total_sentences": int(learning_metrics.get("reading_total_sentences", 0)),
+        "reading_link_agreement": float(learning_metrics.get("reading_link_agreement", 0.0)),
+        "reading_intent_proposals": int(learning_metrics.get("intent_proposals", 0)),
+        "reading_intent_agreement": float(learning_metrics.get("intent_agreement", 0.0)),
+        "reading_intent_margin": float(learning_metrics.get("intent_margin", 0.0)),
+        "reading_intent_target_similarity": float(learning_metrics.get("intent_target_similarity", 0.0)),
+        "reading_intent_successes": int(learning_metrics.get("intent_successes", 0)),
     }
     data.update(compute_grounding_task_metrics(getattr(coordinator, "active_tasks", []) or []))
     if "_last_need_data" in globals():
@@ -313,6 +345,22 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                 f"human-token practice={int(dialogue_metrics.get('human_token_practice_exchanges', 0))}; "
                 f"free turns={int(dialogue_metrics.get('free_turns', 0))}\n"
             )
+        learning_metrics = getattr(coordinator, "community_learning_metrics", {}) or {}
+        f.write(
+            "   Learning loop: "
+            f"discomfort={float(learning_metrics.get('discomfort', 0.0)):.2f}; "
+            f"quiet={int(learning_metrics.get('quiet_streak', 0))}; "
+            f"stagnation={int(learning_metrics.get('stagnation_streak', 0))}; "
+            f"wrong-rate={float(learning_metrics.get('wrong_attempt_rate', 0.0)):.2f}; "
+            f"read={int(learning_metrics.get('reading_sentences', 0))} "
+            f"(+{int(learning_metrics.get('reading_new_tokens', 0))} tokens, "
+            f"total={int(learning_metrics.get('reading_total_sentences', 0))}); "
+            f"links={float(learning_metrics.get('reading_link_agreement', 0.0)):.2f}; "
+            f"intent={int(learning_metrics.get('intent_successes', 0))}"
+            f"/{int(learning_metrics.get('intent_proposals', 0))} "
+            f"@{float(learning_metrics.get('intent_agreement', 0.0)):.2f} "
+            f"margin={float(learning_metrics.get('intent_margin', 0.0)):.2f}\n"
+        )
         conversation_metrics = getattr(
             getattr(coordinator, "community_conversation", None), "metrics", {}
         ) or {}
@@ -323,6 +371,24 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
                 f"pending={int(conversation_metrics.get('pending', 0))}; "
                 f"answers={int(conversation_metrics.get('answers', 0))}; "
                 f"free={int(conversation_metrics.get('free_answers', 0))}; "
+                f"mode={conversation_metrics.get('mode', 'introduction')}; "
+                f"topic={conversation_metrics.get('active_topic', '-') or '-'}; "
+                f"intent={conversation_metrics.get('last_input_intent', '-') or '-'}"
+                f"->{conversation_metrics.get('last_reply_intent', '-') or '-'}; "
+                f"mode-agreement={float(conversation_metrics.get('last_mode_agreement', 0.0)):.2f}; "
+                f"repeat-penalty={float(conversation_metrics.get('last_repeat_penalty', 0.0)):.2f}; "
+                f"working={conversation_metrics.get('working_topic', '-') or '-'}; "
+                f"parked={int(conversation_metrics.get('parked_frames', 0))}; "
+                f"memory={conversation_metrics.get('last_memory_action', 'idle')}; "
+                f"feedback=+{int(conversation_metrics.get('positive_feedback', 0))}"
+                f"/-{int(conversation_metrics.get('negative_feedback', 0))} "
+                f"({conversation_metrics.get('last_feedback', '-') or '-'}); "
+                f"bigrams={int(conversation_metrics.get('promoted_bigrams', 0))}"
+                f"/{int(conversation_metrics.get('english_bigrams', 0))}; "
+                f"meaning={int(conversation_metrics.get('meaning_tokens', 0))}"
+                f"t/{int(conversation_metrics.get('meaning_bigrams', 0))}b; "
+                f"world={int(conversation_metrics.get('world_confirmed_edges', 0))}"
+                f"/{int(conversation_metrics.get('world_edges', 0))}; "
                 f"agreement={float(conversation_metrics.get('last_agreement', 0.0)):.2f}\n"
             )
 

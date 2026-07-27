@@ -35,7 +35,28 @@ class HumanDictionary:
         if not isinstance(token, str) or not token:
             return None
         entries = self._load()
-        return entries.get(token.upper()) or entries.get(token.title()) or entries.get(token)
+        candidates = [token]
+        lowered = token.lower()
+        # Dictionary headwords are commonly singular while ordinary human
+        # conversation is not.  This intentionally small fallback avoids
+        # pretending to be a full lemmatiser while covering apples/bananas.
+        if lowered.endswith("ies") and len(lowered) > 4:
+            candidates.append(lowered[:-3] + "y")
+        elif lowered.endswith("s") and len(lowered) > 3 and not lowered.endswith("ss"):
+            candidates.append(lowered[:-1])
+        fallback = None
+        for candidate in candidates:
+            found = (
+                entries.get(candidate.upper())
+                or entries.get(candidate.title())
+                or entries.get(candidate)
+            )
+            if found is None:
+                continue
+            if isinstance(found, dict) and found.get("MEANINGS"):
+                return found
+            fallback = fallback or found
+        return fallback
 
     @staticmethod
     def _words(text):
@@ -75,4 +96,59 @@ class HumanDictionary:
             "word": token.lower(),
             "synonyms": unique(synonyms),
             "antonyms": unique(antonyms),
+        }
+
+    def meaning_evidence(self, token, token_limit=12, bigram_limit=8):
+        """Return bounded, structured evidence from an entry's meanings.
+
+        Category phrases are safer than treating a full definition as a
+        sentence template: ``apple`` can support ``edible fruit`` without
+        asserting that every adjective in its gloss is universally true.
+        Definition words are returned separately at lower confidence for
+        semantic linking only.
+        """
+        entry = self.entry(token)
+        if not isinstance(entry, dict):
+            return None
+
+        category_tokens = []
+        category_bigrams = []
+        definition_tokens = []
+        for meaning in entry.get("MEANINGS", []) or []:
+            if not isinstance(meaning, (list, tuple)):
+                continue
+            if len(meaning) > 1:
+                definition_tokens.extend(self._words(meaning[1]))
+            categories = meaning[2] if len(meaning) > 2 and isinstance(meaning[2], (list, tuple)) else []
+            for category in categories:
+                words = self._words(category)
+                category_tokens.extend(words)
+                category_bigrams.extend(zip(words, words[1:]))
+
+        def unique(items, limit):
+            seen = set()
+            result = []
+            for item in items:
+                if item == token.lower() or item in seen:
+                    continue
+                seen.add(item)
+                result.append(item)
+                if len(result) >= limit:
+                    break
+            return result
+
+        unique_bigrams = []
+        seen_bigrams = set()
+        for pair in category_bigrams:
+            if pair in seen_bigrams or token.lower() in pair:
+                continue
+            seen_bigrams.add(pair)
+            unique_bigrams.append(pair)
+            if len(unique_bigrams) >= bigram_limit:
+                break
+        return {
+            "word": token.lower(),
+            "category_tokens": unique(category_tokens, token_limit),
+            "definition_tokens": unique(definition_tokens, token_limit),
+            "category_bigrams": unique_bigrams,
         }

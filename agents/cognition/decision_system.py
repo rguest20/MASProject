@@ -26,6 +26,7 @@ class DecisionSystem:
         frustration = state.get("frustration", 0.0)
         confidence = state.get("confidence", 0.5)
         purpose = state.get("purpose", 0.5)
+        discomfort = max(0.0, min(1.0, float(getattr(o, "intrinsic_discomfort", 0.0))))
 
         energy = getattr(o, "energy", 50.0)
 
@@ -53,6 +54,14 @@ class DecisionSystem:
             ),
             "reorganize_concepts": (0.5 * curiosity_trait + 0.5 * (1.0 - satisfaction)),
         }
+
+        # Discomfort is an itch to seek new evidence or repair an unreliable
+        # concept, never a direct fitness punishment.  It therefore changes
+        # what agents choose to do while preserving the existing ecology.
+        weights["attempt_learning"] += 0.70 * discomfort
+        weights["explore_semantic_space"] += 0.75 * discomfort
+        weights["reorganize_concepts"] += 0.55 * discomfort
+        weights["attempt_language_challenge"] += 0.25 * discomfort
 
         if energy < 20:
             weights["idle"] += 2.0

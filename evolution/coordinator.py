@@ -19,6 +19,7 @@ from evolution.programs import run_program, safe, mutate_program
 from evolution.mixins.global_registry import GlobalTokenRegistry
 from evolution.community_lexicon import CommunityLexicon
 from evolution.human_dictionary import HumanDictionary
+from evolution.community_reading import CommunityReadingRoom
 from evolution.coordinator_settings import (
     POP_SIZE,
     ELITE_RATIO,
@@ -121,6 +122,41 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
         self.human_sentence_form_votes = Counter()
         self.human_sentence_tokens = Counter()
         self.human_sentence_transitions = defaultdict(Counter)
+        # Reading is kept separate from Ryan's transcript.  It supplies a
+        # paced context corpus and only consensus practice may later seep
+        # into the human-facing sentence pool.
+        self.community_reading = CommunityReadingRoom(Path(__file__).resolve().parents[1])
+        self.reading_token_memory = Counter()
+        self.reading_sentence_tokens = Counter()
+        self.reading_sentence_transitions = defaultdict(Counter)
+        self.reading_sentence_start_tokens = Counter()
+        self.reading_sentence_end_tokens = Counter()
+        self.reading_context_directions = deque(maxlen=96)
+        self.reading_log_path = self.run_dir / "reading_log.txt"
+        self.community_learning_state = {
+            "quiet_streak": 0,
+            "stagnation_streak": 0,
+            "wrong_attempt_ema": 0.0,
+            "last_read_generation": -999,
+            "sentences_read_total": 0,
+            "intent_success_total": 0,
+        }
+        self.community_learning_metrics = {
+            "discomfort": 0.0,
+            "quiet_streak": 0,
+            "stagnation_streak": 0,
+            "wrong_attempt_rate": 0.0,
+            "reading_sentences": 0,
+            "reading_new_tokens": 0,
+            "reading_total_sentences": 0,
+            "reading_link_agreement": 0.0,
+            "intent_proposals": 0,
+            "intent_agreement": 0.0,
+            "intent_margin": 0.0,
+            "intent_target_similarity": 0.0,
+            "intent_successes": 0,
+        }
+        self.community_discomfort = 0.0
         # Reset and filled by run_dialogues each generation.  Keeping this
         # separate from the long dialogue archive makes the current social
         # language pressure visible in the CSV/report.
@@ -1054,6 +1090,11 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         self.ledger.reset_gen()
 
+        # In the absence of a waiting human prompt, a short reading passage
+        # gives the community fresh contextual English before it begins this
+        # generation's ordinary language and task work.
+        self.run_quiet_reading_cycle()
+
         # language phase
         self.run_language_phase()
 
@@ -1085,6 +1126,11 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
 
         for task in self.active_tasks:
             self.score_task(task)
+
+        # Repeated wrong attempts and long novelty droughts create a bounded
+        # exploratory drive.  It alters later action choice this generation;
+        # it is not deducted from fitness or energy.
+        self.update_community_discomfort()
 
         self.compact_numeric_overlays()
 

@@ -271,7 +271,16 @@ class CoordinatorTaskMixin:
 
         counts = getattr(self, "human_dictionary_link_counts", {})
         words = [word for word, _ in candidates]
-        weights = [1.0 / (1.0 + counts.get(word, 0)) for word in words]
+        active_topic = getattr(
+            getattr(self, "community_conversation", None), "active_topic", None
+        )
+        # When a discussion has a subject, dictionary practice reinforces the
+        # human term currently carrying that discussion.  It remains balanced
+        # by the per-word count, so one topic cannot monopolise every task.
+        weights = [
+            (2.5 if word == active_topic else 1.0) / (1.0 + counts.get(word, 0))
+            for word in words
+        ]
         word, relations = random.choices(candidates, weights=weights, k=1)[0]
         relation = "synonym" if relations["synonyms"] else "antonym"
         accepted = relations["synonyms"] if relation == "synonym" else relations["antonyms"]

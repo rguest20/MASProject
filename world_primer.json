@@ -1,0 +1,19 @@
+{
+  "facts": [
+    {"relation": "is_a", "subject": "person", "object": "agent", "confidence": 0.18},
+    {"relation": "is_a", "subject": "community", "object": "agent", "confidence": 0.18},
+    {"relation": "is_a", "subject": "food", "object": "substance", "confidence": 0.18},
+    {"relation": "is_a", "subject": "apple", "object": "fruit", "confidence": 0.18},
+    {"relation": "is_a", "subject": "banana", "object": "fruit", "confidence": 0.18},
+    {"relation": "is_a", "subject": "game", "object": "activity", "confidence": 0.18},
+    {"relation": "has", "subject": "game", "object": "ball", "confidence": 0.16},
+    {"relation": "is_a", "subject": "winner", "object": "person", "confidence": 0.16},
+    {"relation": "is_a", "subject": "loser", "object": "person", "confidence": 0.16},
+    {"relation": "opposite", "subject": "winner", "object": "loser", "confidence": 0.18},
+    {"relation": "opposite", "subject": "loser", "object": "winner", "confidence": 0.18},
+    {"relation": "opposite", "subject": "good", "object": "bad", "confidence": 0.18},
+    {"relation": "opposite", "subject": "bad", "object": "good", "confidence": 0.18},
+    {"relation": "opposite", "subject": "bigger", "object": "smaller", "confidence": 0.18},
+    {"relation": "opposite", "subject": "smaller", "object": "bigger", "confidence": 0.18}
+  ]
+}

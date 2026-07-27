@@ -76,7 +76,23 @@ class EmotionMixin:
                 "curiosity": +0.03,
                 "frustration": -0.02,
             },
+            "reading_progress": {
+                "curiosity": +0.025,
+                "satisfaction": +0.015,
+                "frustration": -0.015,
+            },
+            "reading_intent_agreement": {
+                "confidence": +0.025,
+                "satisfaction": +0.03,
+                "purpose": +0.02,
+                "frustration": -0.025,
+            },
         }
+        # This is an exploratory drive, not an energy or fitness penalty.
+        # The coordinator supplies a bounded community-level signal and each
+        # agent blends it with its private state.
+        self.intrinsic_discomfort = 0.0
+        self.community_discomfort = 0.0
 
     # ----------------------------------------------------
     # Clamp utility
@@ -99,6 +115,31 @@ class EmotionMixin:
         for key, delta in rules.items():
             if key in S:
                 S[key] = self._clamp01(S[key] + delta)
+
+    def receive_community_discomfort(self, level, stagnation=0.0, errors=0.0):
+        """Turn a shared learning itch into a small, bounded private drive."""
+        level = self._clamp01(level)
+        self.community_discomfort = level
+        current = float(getattr(self, "intrinsic_discomfort", 0.0))
+        self.intrinsic_discomfort = self._clamp01((0.70 * current) + (0.30 * level))
+
+        # Stagnation asks for exploration; repeated poor attempts additionally
+        # ask for concept reorganisation.  These nudges are intentionally
+        # smaller than ordinary social/teaching events.
+        self.state["curiosity"] = self._clamp01(
+            self.state["curiosity"] + (0.025 * level) + (0.015 * stagnation)
+        )
+        self.state["purpose"] = self._clamp01(
+            self.state["purpose"] + (0.012 * level)
+        )
+        self.state["frustration"] = self._clamp01(
+            self.state["frustration"] + (0.018 * errors)
+        )
+
+    def relieve_community_discomfort(self, amount=0.10):
+        """Let successful novel learning settle the exploratory drive."""
+        current = float(getattr(self, "intrinsic_discomfort", 0.0))
+        self.intrinsic_discomfort = self._clamp01(current - max(0.0, amount))
 
     # ----------------------------------------------------
     # Passive emotional drift each tick
@@ -158,8 +199,10 @@ class EmotionMixin:
         collisions = self.numeric_system._numeric_collision_score()
         if collisions > 0:
             # scaled by curiosity
-            self.intrinsic_discomfort = \
-                self.intrinsic_discomfort + 0.05 * self.curiosity * collisions
+            curiosity = float(self.state.get("curiosity", 0.5))
+            self.intrinsic_discomfort = self._clamp01(
+                self.intrinsic_discomfort + 0.05 * curiosity * collisions
+            )
         else:
             # slight relief if improving
-            self.intrinsic_discomfort *= 0.97
+            self.intrinsic_discomfort = self._clamp01(self.intrinsic_discomfort * 0.97)
