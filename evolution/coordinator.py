@@ -15,38 +15,23 @@ import evolution.coordinator_settings as coordinator_settings
 from evolution.challenge import ChallengeSystem
 from agents.cognition.numeric_system import NumericSystem
 from evolution.logging import compute_generation_summary, append_generation_to_csv, write_generation_report, _get_log_filenames
-from evolution.programs import run_program, safe, mutate_program
+from evolution.programs import run_program, safe
 from evolution.mixins.global_registry import GlobalTokenRegistry
 from evolution.community_lexicon import CommunityLexicon
 from evolution.human_dictionary import HumanDictionary
 from evolution.community_reading import CommunityReadingRoom
 from evolution.coordinator_settings import (
     POP_SIZE,
-    ELITE_RATIO,
     ENABLE_DICTIONARY_INJECTION,
-    UTTER_CHANCE,
     UTTER_EFFECT,
-    REWARD_EPS,
-    REWARD_TEMP,
-    PHASE2_LR,
-    TASK_SEMANTIC_ALIGNMENT,
     MATE_POOL_SIZE,
     COMPAT_WEIGHT,
     FITNESS_WEIGHT,
     MEMORY_WEIGHT,
     DIVERSITY_WEIGHT,
-    GOSSIP_PAIRS_PER_GEN,
-    TEACH_PROB,
-    TEACH_TOP_FRACTION,
-    TEACH_PAIRS_PER_PASS,
-    TEACH_ROUNDS_PER_GEN,
-    TEACH_ACC_TEMP,
-    IMPROVE_ONLY_TEACH,
     OUTCOME_SCALE,
-    REFERENTIAL_BONUS,
     MAX_COOP_BONUS,
     MAX_NOVELTY_BONUS,
-    MAX_FIT,
     ENERGY_MAX,
     IDLE_TAX,
     MIN_PARTICIPATION,
@@ -61,12 +46,6 @@ from evolution.behaviours.orchestration import orchestrate_action
 # If your phase3/__init__.py re-exports these, this import works:
 from phase3 import SandboxSpec, build_sandbox
 from phase3.agent_api import AgentAPI
-
-import time
-
-def PERF(msg):
-    print(f"[PERF {time.time():.3f}] {msg}", flush=True)
-
 
 class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
     def __init__(self, run_dir=None, seed=None, conversation_path=None):
@@ -433,18 +412,6 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
                 return ag
         return None
 
-    def sample_random_utterance(self):
-        if not hasattr(self, "dialogue_log") or not self.dialogue_log:
-            return None
-        entry = random.choice(self.dialogue_log)
-        if not entry:
-            return None
-        turns = entry.get("turns") or []
-        if not turns:
-            return None
-        turn = random.choice(turns)
-        return turn.get("utterance")
-
     def damp_trait(self, value, strength=0.05):
         # pull traits gently toward neutral to avoid absorbing extremes
         return value + (0.5 - value) * strength
@@ -501,20 +468,6 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             mean = mean * decay + random.uniform(-noise, noise)
             out[k] = max(-1.0, min(1.0, mean))
         return out
-
-    def _blend_symbol_drift(self, *parents, noise=0.02, decay=0.98):
-        # assume all parents have same vocab keys
-        if not parents:
-            return {}
-        keys = list(parents[0].symbol_drift.keys())
-        out = {}
-        for k in keys:
-            vals = [p.symbol_drift.get(k, 0.0) for p in parents]
-            mean = sum(vals) / max(1, len(vals))
-            mean = mean * decay + random.uniform(-noise, noise)
-            out[k] = self._clamp(mean, -1.0, 1.0)
-        return out
-
 
     # -----------------------------
     # Fitness pipeline
@@ -1514,16 +1467,6 @@ class Coordinator(CoordinatorTaskMixin, CoordinatorLanguageMixin):
             samples = sorted(samples, key=lambda x: x[2], reverse=True)[:top_k]
             for aid, tok, dist in samples:
                 print(f"  A{aid}: '{tok}' dist={dist:.3f}")
-
-    def community_distance(self, tok, community_map):
-        if tok not in community_map["vecs"]:
-            return None
-        if tok not in self.semantic["vecs"]:
-            return None
-
-        a = np.array(self.semantic["vecs"][tok])
-        b = np.array(community_map["vecs"][tok])
-        return float(np.linalg.norm(a - b))
 
     # =====================================================
     # Receive gap-driven tasks from agents

@@ -1,7 +1,7 @@
 import math
 import random
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 from agents.cognition.semantic_utils import add, scale, cos_sim
 from evolution.coordinator_settings import (
@@ -11,12 +11,7 @@ from evolution.coordinator_settings import (
     REWARD_TEMP,
     TEACH_PAIRS_PER_PASS,
     TEACH_ACC_TEMP,
-    TEACH_TOP_FRACTION,
-    TEACH_PROB,
-    IMPROVE_ONLY_TEACH,
-    OUTCOME_SCALE,
 )
-from evolution.programs import run_program, mutate_program
 
 
 class CoordinatorLanguageMixin:
@@ -630,92 +625,6 @@ class CoordinatorLanguageMixin:
 
             old = speaker.utterance_memory["associations"].get(utterance, 0.0)
             speaker.utterance_memory["associations"][utterance] = old * 0.9
-
-    @staticmethod
-    def crossover_program(prog_a, prog_b):
-        try:
-            len_a, len_b = len(prog_a), len(prog_b)
-            if len_a == 0 or len_b == 0:
-                return prog_a[:] if len_a >= len_b else prog_b[:]
-            cut_a = random.randrange(len_a)
-            cut_b = random.randrange(len_b)
-            child = prog_a[:cut_a] + prog_b[cut_b:]
-            if len(child) == 0:
-                child = (prog_a if random.random() < 0.5 else prog_b)[:]
-            return child
-        except Exception:
-            return prog_a[:]
-
-    def teaching_phase(self):
-        ranked = sorted(self.agents, key=lambda a: a.total_fitness, reverse=True)
-        top_n = max(1, int(len(self.agents) * TEACH_TOP_FRACTION))
-        teachers = ranked[:top_n]
-
-        for teacher in teachers:
-            if random.random() > TEACH_PROB:
-                continue
-
-            candidates = [a for a in self.agents if a.id != teacher.id]
-            if not candidates:
-                continue
-
-            weights = []
-            for c in candidates:
-                will = max(0.0, teacher.teaching_system.teaching_willingness(c.id))
-                weights.append(0.05 + will)
-
-            student = random.choices(candidates, weights=weights)[0]
-
-            student.teaching_attempted = True
-            teacher.teaching_attempted = True
-
-            if teacher.teaching_system.teaching_willingness(student.id) < teacher.traits.get("trust_threshold", 0.3):
-                continue
-
-            new_prog = self.crossover_program(student.program, teacher.program)
-            new_prog = mutate_program(new_prog)
-
-            if IMPROVE_ONLY_TEACH:
-                old_fit = student.own_fitness
-                try:
-                    tmp_fit = run_program(new_prog)
-                except Exception:
-                    tmp_fit = -1e9
-                if tmp_fit > old_fit:
-                    student.program = new_prog
-                    outcome = (tmp_fit - old_fit) * OUTCOME_SCALE
-                    student.remember_interaction(teacher.id, outcome=outcome, gen_index=self.generation_index)
-                    teacher.remember_interaction(student.id, outcome=outcome * 0.5, gen_index=self.generation_index)
-            else:
-                student.program = new_prog
-
-            bundle = teacher.export_semantic_bundle(max_keys=1)
-            if not bundle:
-                continue
-
-            word = bundle["tokens"][0]
-            expected_vec = bundle["vecs"][word]
-
-            teach_reward, teach_penalty, sim = teacher.teaching_system.teach_student(
-                student, word, current_gen=self.generation_index
-            )
-
-            eval_reward = student.teaching_system.evaluate_teaching(
-                teacher.id, word, expected_vec
-            )
-
-            teacher.apply_teaching_reward(student.id, eval_reward)
-
-            try:
-                self.world.append_text(
-                    "/notes.txt",
-                    f"[TeachPhase] A{teacher.id}->{student.id} "
-                    f"trust={teacher.teaching_system.teaching_willingness(student.id):.2f} "
-                    f"word={word} sim={sim:.2f} "
-                    f"teachR={teach_reward:.2f} evalR={eval_reward:.2f}\n"
-                )
-            except Exception:
-                pass
 
     def run_language_phase(self):
         self.last_utterances = {}

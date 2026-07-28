@@ -1,6 +1,5 @@
 import random
 
-from agents.agent_constants import REL_GT, REL_LT, REL_EQ
 from evolution.coordinator_settings import FOCUSED_GROUNDING_EXPERIMENT
 
 
@@ -10,21 +9,6 @@ class CoordinatorTaskMixin:
     monolithic Coordinator.  Keeping them in a mixin lets the core
     class focus on orchestration while reuse remains straightforward.
     """
-
-    def load_tasks(self, filename="/tasks.json"):
-        """Load tasks from a shared JSON file inside the sandbox."""
-        try:
-            raw = self.world.read_json(filename)
-            if not raw:
-                return []
-            if isinstance(raw, dict):
-                return [raw]
-            if isinstance(raw, list):
-                return raw
-            return []
-        except Exception as e:
-            print("TASK LOAD ERROR:", e)
-            return []
 
     def _generate_task_id(self):
         tid = f"T{self.next_task_id:04d}"
@@ -542,50 +526,6 @@ class CoordinatorTaskMixin:
             "responses": [],
         }
 
-    def generate_cooperative_compare_task(self):
-        if not self.agents or len(self.agents) < 2:
-            return None
-
-        ref = random.choice(self.agents)
-        base = getattr(ref.counting, "base", 8)
-        max_val = base * base
-
-        a_val = random.randint(0, max_val - 1)
-        b_val = random.randint(0, max_val - 1)
-        if a_val == b_val:
-            b_val = (b_val + 1) % max_val
-
-        A_tokens = ref.counting.interpret(a_val)
-        B_tokens = ref.counting.interpret(b_val)
-
-        A_phrase = " ".join(ref.counting.get_symbol(d) for d in A_tokens)
-        B_phrase = " ".join(ref.counting.get_symbol(d) for d in B_tokens)
-
-        participants = random.sample(self.agents, 2)
-        assigned = [participants[0].id, participants[1].id]
-
-        task = {
-            "task_id": self._generate_task_id(),
-            "task_type": "compare_numbers",
-            "assigned_agents": assigned,
-            "data": {
-                "A": A_phrase,
-                "B": B_phrase,
-            },
-        }
-
-        try:
-            line = (
-                f"COOP_TASK {task['task_id']} ref=A{ref.id} "
-                f"agents={assigned} A='{A_phrase}' B='{B_phrase}' "
-                f"a_val={a_val} b_val={b_val}\n"
-            )
-            self.world.append_text("/coop_tasks.txt", line)
-        except Exception:
-            pass
-
-        return task
-
     def generate_agreement_dialogue_task(self):
         if len(self.agents) < 2:
             return None
@@ -605,38 +545,6 @@ class CoordinatorTaskMixin:
             "topic": f"{u1} || {u2}",
             "assigned_agents": [a.id, b.id],
         }
-
-    def generate_token_compression_tasks(self, rounds=10):
-        tasks = []
-        for _ in range(rounds):
-            ag = random.choice(self.agents)
-            utt = self.sample_random_utterance() or ag.produce_utterance()
-
-            tasks.append({
-                "task_type": "token_compress",
-                "task_id": self._generate_task_id(),
-                "assigned_agents": [ag.id],
-                "utterance": utt,
-            })
-        return tasks
-
-    def generate_preference_alignment_tasks(self, rounds=10):
-        tasks = []
-        roots = ["tar", "rin", "muk", "vak", "tol", "bel", "zev", "ka", "lo", "su"]
-
-        for _ in range(rounds):
-            A, B, P = random.sample(roots, 3)
-            a, b = random.sample(self.agents, 2)
-
-            tasks.append({
-                "task_type": "pref_align",
-                "task_id": self._generate_task_id(),
-                "assigned_agents": [a.id, b.id],
-                "A": A,
-                "B": B,
-                "pivot": P,
-            })
-        return tasks
 
     def generate_reconcile_counts_task(self, force_fresh=False):
         if len(self.agents) < 2:
@@ -1357,46 +1265,3 @@ class CoordinatorTaskMixin:
             ag = self.agent_by_id(aid)
             if ag and r.get("prediction") == majority:
                 ag.own_fitness += 0.08 * frac
-
-    def evaluate_cooperative_task(self, task, responses):
-        a_id, b_id = task["assigned_agents"]
-
-        if a_id not in responses or b_id not in responses:
-            return
-
-        ra = responses[a_id]
-        rb = responses[b_id]
-
-        score = 0
-
-        if ra["relation"] == rb["relation"]:
-            score += 1.0
-
-        if ra["answer"] == rb["answer"]:
-            score += 1.0
-
-        if ra.get("shared_token") and rb.get("shared_token"):
-            if ra["shared_token"] == rb["shared_token"]:
-                score += 1.0
-
-        A_full = task["data"]["A"]
-        B_full = task["data"]["B"]
-        valA = self.agents[a_id]._decode_number_phrase(A_full)
-        valB = self.agents[b_id]._decode_number_phrase(B_full)
-
-        correct_rel = (
-            REL_GT if valA > valB else
-            REL_LT if valB > valA else
-            REL_EQ
-        )
-
-        if ra["relation"] == correct_rel:
-            score += 0.5
-        if rb["relation"] == correct_rel:
-            score += 0.5
-
-        self.agents[a_id].adjust_trust(b_id, +0.05 * score, channel=3)
-        self.agents[b_id].adjust_trust(a_id, +0.05 * score, channel=3)
-
-        self.agents[a_id].cooperation_bonus += score
-        self.agents[b_id].cooperation_bonus += score

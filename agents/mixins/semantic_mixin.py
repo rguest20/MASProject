@@ -3,16 +3,11 @@
 import random
 import numpy as np
 from collections import defaultdict
-import math
 
 from agents.cognition.semantic_utils import (
-    rand_vec, add, sub, scale, norm, cos_sim,
-    extract_keywords, sniff_dictionary_keys, DIM
+    rand_vec, add, sub, scale, cos_sim,
 )
 from agents.agent_constants import SYLLABLES
-
-DEBUG_SEM = True
-MAX_GLOBAL_DEGREE = 20
 
 
 class SemanticMixin:
@@ -421,32 +416,9 @@ class SemanticMixin:
             return self.token_registry.is_numeric(tok)
         return False
 
-    def register_numeric_token(self, tok):
-        if hasattr(self, "numeric_system"):
-            self.numeric_system._register_numeric_token(tok)
-        elif hasattr(self, "token_registry") and self.token_registry:
-            self.token_registry.register_numeric(tok)
-
     # ============================================================
     # SEMANTIC GRAPH (links + gravity)
     # ============================================================
-    def _enforce_global_degree(self, tok):
-            links = self.semantic["links"][tok]
-            if len(links) <= MAX_GLOBAL_DEGREE:
-                return
-
-            # sort by usefulness, lowest first
-            ordered = sorted(
-                links.items(),
-                key=lambda kv: kv[1].get("use", 0.0)
-            )
-
-            while len(links) > MAX_GLOBAL_DEGREE:
-                dead, _ = ordered.pop(0)
-                del links[dead]
-                if tok in self.semantic["links"].get(dead, {}):
-                    del self.semantic["links"][dead][tok]
-
     def _true_degree(self, tok):
         if hasattr(self, "semantic_system"):
             return self.semantic_system._true_degree(tok)
@@ -834,22 +806,6 @@ class SemanticMixin:
                 self._ensure_vec(wl)
 
     # ============================================================
-    # SEMANTIC NEIGHBOURS
-    # ============================================================
-    def pick_semantic_neighbor(self, token):
-        """Weighted-random neighbor based on link strength."""
-        if hasattr(self, "semantic_system"):
-            return self.semantic_system.pick_neighbor(token)
-
-        self._ensure_semantic()
-        nbrs = self.semantic["links"].get(token, {})
-        if not nbrs:
-            return None
-        words, weights = zip(*nbrs.items())
-        weights = [max(1e-6, w) for w in weights]
-        return random.choices(words, weights=weights)[0]
-
-    # ============================================================
     # PUBLIC "TICK" FOR SEMANTIC EVOLUTION
     # ============================================================
     def semantic_update_tick(self):
@@ -929,14 +885,6 @@ class SemanticMixin:
 
     def semantic_distance(self, a, b):
         return 1.0 - float(self.semantic_similarity(a, b))
-
-    # ============================================================
-    # OPTIONAL: INGEST FREE TEXT
-    # ============================================================
-    def add_semantic_observation(self, text: str):
-        tokens = extract_keywords(text.lower())
-        if tokens:
-            self._observe_tokens(tokens)
 
     # ============================================================
     # AGENT IDENTITY SEMANTICS

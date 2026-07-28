@@ -20,6 +20,37 @@ class TaskSystemV2:
       - supports cooperative numeric comparison tasks
     """
 
+    # Keep the task vocabulary in one inspectable place.  The coordinator can
+    # still stage any of these tasks, while a missing handler now fails closed
+    # instead of being hidden in a long conditional chain.
+    TASK_HANDLERS = {
+        "compare_numbers": "_solve_compare_numbers",
+        "cooperative_compare_numbers": "_solve_cooperative_compare_numbers",
+        "reconcile_counts": "_solve_reconcile_counts",
+        "translate_number": "_solve_reconcile_counts",
+        "translate_quantity": "_solve_reconcile_counts",
+        "referential_signal": "_solve_referential_signal",
+        "action_signal": "_solve_action_signal",
+        "compositional_signal": "_solve_compositional_signal",
+        "compositional_action_signal": "_solve_compositional_action_signal",
+        "human_dictionary_link": "_solve_human_dictionary_link",
+        "semantic_alignment": "_solve_semantic_gap",
+        "agreement_dialogue": "_solve_agreement_dialogue",
+        "explain_partner": "_solve_explain_partner_answer",
+        "token_compress": "_solve_token_compression",
+        "pref_align": "_solve_preference_alignment_dialogue",
+        "describe_concept": "_solve_describe_concept",
+        "action_reconstruction": "_solve_action_reconstruction",
+        "similarity_debate": "_solve_similarity_debate",
+        "narrative_chain": "_solve_narrative_chain",
+        "role_assignment": "_solve_role_assignment",
+        "misunderstanding_detection": "_solve_misunderstanding_detection",
+        "property_attribution": "_solve_property_attribution",
+        "verb_noun_compat": "_solve_verb_noun_compat",
+        "definition_swap": "_solve_definition_swap",
+        "prediction_task": "_solve_prediction_task",
+    }
+
     def __init__(self, owner):
         object.__setattr__(self, "owner", owner)
 
@@ -133,62 +164,12 @@ class TaskSystemV2:
             return
 
         ttype = task.get("task_type")
-        resp = None
+        handler_name = self.TASK_HANDLERS.get(ttype)
+        if handler_name is None:
+            return
 
         try:
-            # Dispatch by task_type
-            if ttype == "compare_numbers":
-                resp = self._solve_compare_numbers(task)
-            elif ttype == "cooperative_compare_numbers":
-                resp = self._solve_cooperative_compare_numbers(task)
-            elif ttype == "reconcile_counts":
-                resp = self._solve_reconcile_counts(task)
-            elif ttype == "translate_number":
-                resp = self._solve_reconcile_counts(task)
-            elif ttype == "translate_quantity":
-                resp = self._solve_reconcile_counts(task)
-            elif ttype == "referential_signal":
-                resp = self._solve_referential_signal(task)
-            elif ttype == "action_signal":
-                resp = self._solve_action_signal(task)
-            elif ttype == "compositional_signal":
-                resp = self._solve_compositional_signal(task)
-            elif ttype == "compositional_action_signal":
-                resp = self._solve_compositional_action_signal(task)
-            elif ttype == "human_dictionary_link":
-                resp = self._solve_human_dictionary_link(task)
-            elif ttype == "semantic_alignment":
-                resp = self._solve_semantic_gap(task)
-            elif ttype == "agreement_dialogue":
-                resp = self._solve_agreement_dialogue(task)
-            elif ttype == "explain_partner":
-                resp = self._solve_explain_partner_answer(task)
-            elif ttype == "token_compress":
-                resp = self._solve_token_compression(task)
-            elif ttype == "pref_align":
-                resp = self._solve_preference_alignment_dialogue(task)
-            elif ttype == "describe_concept":
-                resp = self._solve_describe_concept(task)
-            elif ttype == "action_reconstruction":
-                resp = self._solve_action_reconstruction(task)
-            elif ttype == "similarity_debate":
-                resp = self._solve_similarity_debate(task)
-            elif ttype == "narrative_chain":
-                resp = self._solve_narrative_chain(task)
-            elif ttype == "role_assignment":
-                resp = self._solve_role_assignment(task)
-            elif ttype == "misunderstanding_detection":
-                resp = self._solve_misunderstanding_detection(task)
-            elif ttype == "property_attribution":
-                resp = self._solve_property_attribution(task)
-            elif ttype == "verb_noun_compat":
-                resp = self._solve_verb_noun_compat(task)
-            elif ttype == "definition_swap":
-                resp = self._solve_definition_swap(task)
-            elif ttype == "prediction_task":
-                resp = self._solve_prediction_task(task)
-            else:
-                return
+            resp = getattr(self, handler_name)(task)
         except Exception as e:
             # Hard shield: a bad task handler should not kill the agent loop
             print(f"[ERROR] A{self.id} in task '{ttype}': {type(e).__name__}: {e}")
