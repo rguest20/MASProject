@@ -261,6 +261,9 @@ def compute_generation_summary(coordinator):
         "reading_new_tokens": int(learning_metrics.get("reading_new_tokens", 0)),
         "reading_total_sentences": int(learning_metrics.get("reading_total_sentences", 0)),
         "reading_link_agreement": float(learning_metrics.get("reading_link_agreement", 0.0)),
+        "reading_bridge_promotions": int(learning_metrics.get("reading_bridge_promotions", 0)),
+        "reading_bridge_vocabulary": int(learning_metrics.get("reading_bridge_vocabulary", 0)),
+        "conversation_reading_bridge_available": int(conversation_metrics.get("reading_bridge_available", 0)),
         "reading_intent_proposals": int(learning_metrics.get("intent_proposals", 0)),
         "reading_intent_agreement": float(learning_metrics.get("intent_agreement", 0.0)),
         "reading_intent_margin": float(learning_metrics.get("intent_margin", 0.0)),
@@ -356,6 +359,8 @@ def write_generation_report(coordinator, filename="generation_report.txt", gener
             f"(+{int(learning_metrics.get('reading_new_tokens', 0))} tokens, "
             f"total={int(learning_metrics.get('reading_total_sentences', 0))}); "
             f"links={float(learning_metrics.get('reading_link_agreement', 0.0)):.2f}; "
+            f"bridge=+{int(learning_metrics.get('reading_bridge_promotions', 0))}"
+            f"/{int(learning_metrics.get('reading_bridge_vocabulary', 0))}; "
             f"intent={int(learning_metrics.get('intent_successes', 0))}"
             f"/{int(learning_metrics.get('intent_proposals', 0))} "
             f"@{float(learning_metrics.get('intent_agreement', 0.0)):.2f} "

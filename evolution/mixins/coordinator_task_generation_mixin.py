@@ -1,0 +1,9 @@
+import random
+
+from evolution.coordinator_settings import FOCUSED_GROUNDING_EXPERIMENT
+
+from evolution.mixins.coordinator_task_planning_mixin import CoordinatorTaskPlanningMixin
+from evolution.mixins.coordinator_task_symbol_generation_mixin import CoordinatorTaskSymbolGenerationMixin
+
+class CoordinatorTaskGenerationMixin(CoordinatorTaskPlanningMixin, CoordinatorTaskSymbolGenerationMixin):
+    pass
