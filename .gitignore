@@ -9,3 +9,5 @@ dialogue_log.txt
 generation_report.txt
 .trunk/
 .venv/
+rust/target/
+python/runs/

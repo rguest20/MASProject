@@ -263,7 +263,9 @@ class Coordinator(CoordinatorGenerationMixin, CoordinatorSemanticMixin, Coordina
                 ) from exc
             return destination
 
-        runs_root = Path("runs").resolve()
+        # Keep Python run artifacts with the Python implementation even when
+        # the runner is invoked from the workspace root.
+        runs_root = Path(__file__).resolve().parents[1] / "runs"
         runs_root.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
         prefix = f"{timestamp}_seed-{self.random_seed:016x}"

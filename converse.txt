@@ -15,32 +15,14 @@
 # Ryan: Teach a2 means move
 # Ryan: What did you do?
 
-Ryan: Hello
-Community: Hello Ryan. I can answer number questions, show learned referents, compose actions, and learn aliases you teach me. Type 'help' for forms.
-Ryan: Hello
-Community: Hello Ryan. I can answer number questions, show learned referents, compose actions, and learn aliases you teach me. Type 'help' for forms.
-Ryan: Hello
-Community: hello ja katol
-Ryan: How are you?
-Community: how nau katol sutol
-Ryan: what is katol
-Community: what nau kalo sutol
-Ryan: hello 
-Community: hello ja kabel kamuk
-Ryan: hello ja
-Community: hello yu zevtar sutol
-Ryan: can you do things
-Community: can ja zevtar sutol
-Ryan: repeated words
-Community: repeated nau kabel kamuk
-Ryan: hello there
-Community: hello se kalo sutol
-Ryan: I would like to greet you
-Community: i ta vaktar sutol
-Ryan: can you use hello in a sentence
-Community: can cu kabel kamuk
-Ryan: you're trying to figure it out, eh?
-Community: you're xe vaktar kaka
-Ryan: we're running out of time
-Community: we're ta kalo sutol
+Ryan: Hi
+Community: We need more context before we can answer.
+Ryan: hello
+Community: We need more context for hello.
+Ryan: hi
+Community: We need more context for hello.
+Ryan: hi there
+Community: We need more context for there.
+Ryan: Can you answer?
+Community: can and all are related.
 Ryan: 

@@ -5,7 +5,7 @@ import pandas as pd
 
 
 def _latest_log():
-    logs = sorted(Path("runs").glob("*/cultural_log.csv"))
+    logs = sorted(Path(__file__).resolve().parent.joinpath("runs").glob("*/cultural_log.csv"))
     if not logs:
         raise FileNotFoundError("No run logs found. Pass the path to cultural_log.csv explicitly.")
     return logs[-1]

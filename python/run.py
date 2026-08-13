@@ -1,8 +1,13 @@
 import argparse
+from pathlib import Path
 import time
 
 from evolution.coordinator import Coordinator
 from config import GENERATIONS
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+WORKSPACE_ROOT = PROJECT_ROOT.parent
 
 
 def main():
@@ -10,7 +15,12 @@ def main():
     parser.add_argument("--generations", type=int, default=GENERATIONS, help="Generations to run outside watch mode.")
     parser.add_argument("--watch", action="store_true", help="Run continuously and poll converse.txt after each generation.")
     parser.add_argument("--delay", type=float, default=0.25, help="Seconds between generations in watch mode.")
-    parser.add_argument("--converse", default="converse.txt", help="Path to the Ryan/Community transcript.")
+    parser.add_argument(
+        "--converse",
+        type=Path,
+        default=WORKSPACE_ROOT / "converse.txt",
+        help="Path to the Ryan/Community transcript (defaults to the workspace converse.txt).",
+    )
     parser.add_argument("--seed", type=int, default=None, help="Optional reproducible random seed.")
     args = parser.parse_args()
 

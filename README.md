@@ -29,33 +29,49 @@
 
 The Agent Sandbox Project is a research-oriented environment for studying emergent behaviour in multi-agent systems. Each agent develops its own internal semantic map, communicates using evolving token structures, and adapts over generations through evolutionary pressure. By observing how concepts, cooperation, subcultures, numeracy, and proto-language evolve, this project aims to uncover how complex collective cognition can arise from simple individual components.
 
+The workspace contains two implementations:
+
+- `python/` is the research-complete reference implementation.
+- `rust/` is a native Rust implementation of the core experimentation loop,
+  designed as the maintainable and performance-oriented porting target.
+
+`converse.txt` and optional reading corpora remain workspace-level shared input
+files, so either implementation can be pointed at the same conversation.
+
 ## Quick Start
 
 ```bash
+# Python reference implementation
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python3 run.py --generations 30
+pip install -r python/requirements.txt
+python3 python/run.py --generations 30
+
+# Native Rust implementation
+cargo run --manifest-path rust/Cargo.toml -- --generations 30
 ```
 
-Each invocation creates a timestamped directory under `runs/`; it does not
-overwrite a previous experiment. The command prints the report, CSV, dialogue
-log, and metadata paths when it finishes.
+If Rust is not installed, on macOS use `brew install rust`. Each invocation
+creates a timestamped directory under `python/runs/` or `rust/runs/`; it does
+not overwrite a previous experiment. The command prints the report, CSV,
+dialogue log, and metadata paths when it finishes.
 
 Useful options:
 
 ```bash
 # Keep running and poll a conversation file after every generation.
-python3 run.py --watch --converse converse.txt
+python3 python/run.py --watch --converse converse.txt
+cargo run --manifest-path rust/Cargo.toml -- --watch --converse converse.txt
 
 # Use a reproducible run.
-python3 run.py --generations 100 --seed 12345
+python3 python/run.py --generations 100 --seed 12345
+cargo run --manifest-path rust/Cargo.toml -- --generations 100 --seed 12345
 ```
 
 ## Running a Conversation
 
-With `--watch`, the community monitors `converse.txt`. Add a completed line in
-this form and save the file:
+With `--watch`, either implementation monitors `converse.txt`. Add a completed
+line in this form and save the file:
 
 ```text
 Ryan: Hello there
@@ -78,19 +94,25 @@ The bridge supports both controlled simulation requests and exploratory prose:
 - Send `+` or `-` on a Ryan line to approve or reject the preceding community
   answer. Feedback reinforces or suppresses its phrase and n-gram evidence.
 
-The conversation system distinguishes short-lived working memory from durable
-semantic links. A change of explicit subject starts a fresh frame; returning to
-the same subject can restore its parked frame. This prevents one definition
-from simply spilling into the next. The current state is held by the running
-coordinator: the transcript remains on disk, but a new process does not replay
-the entire transcript into a new conversation memory.
+The Python conversation system distinguishes short-lived working memory from
+durable semantic links. A change of explicit subject starts a fresh frame;
+returning to the same subject can restore its parked frame. This prevents one
+definition from simply spilling into the next. The current state is held by the
+running coordinator: the transcript remains on disk, but a new process does
+not replay the entire transcript into a new conversation memory.
+
+The Rust bridge implements the same file workflow, controlled queries, simple
+subject-centred fact retrieval, feedback, and refusal to emit one-word answers.
+It is a clean native reimplementation rather than a Python wrapper; see
+[`rust/README.md`](rust/README.md) for its current parity boundary.
 
 ## Reading, Dictionary, and Learning Pressure
 
 `clean_merged_fairy_tales_without_eos.txt` or
-`cleaned_merged_fairy_tales_without_eos.txt`, when present, provides paced
-adjacent passages during quiet generations. Reading supplies private
-co-occurrence and sentence-order evidence; it does not create world facts.
+`cleaned_merged_fairy_tales_without_eos.txt`, when present at the workspace
+root or inside `python/`, provides paced adjacent passages during quiet
+generations. Reading supplies private co-occurrence and sentence-order
+evidence; it does not create world facts.
 
 Words may move from reading into a small conversation bridge only after they
 have appeared in several distinct contexts with sufficient local evidence.
@@ -234,7 +256,8 @@ This directory-based environment keeps the emergent system interpretable and deb
 
 ### Run Artifacts
 
-Each run writes to `runs/<timestamp>_seed-<seed>/`:
+Python runs write to `python/runs/<timestamp>_seed-<seed>/`; Rust runs write to
+`rust/runs/<timestamp>_seed-<seed>/`:
 
 - `generation_report.txt` — readable per-generation summaries.
 - `cultural_log.csv` — numeric metrics for plotting or comparison.
@@ -339,13 +362,15 @@ This system is intended not just as a simulation, but as a **research platform**
 The runtime uses small parent classes that compose focused mixins rather than
 single monolithic modules:
 
-- `evolution/coordinator.py` composes generation, evolution, semantic, task,
+- `python/evolution/coordinator.py` composes generation, evolution, semantic, task,
   and language responsibilities.
-- `evolution/community_conversation.py` composes transcript handling,
+- `python/evolution/community_conversation.py` composes transcript handling,
   conversation memory, and response composition.
-- `agents/cognition/task_system_v2.py` composes dispatch, numeric, signal,
+- `python/agents/cognition/task_system_v2.py` composes dispatch, numeric, signal,
   dialogue, and conceptual task solvers.
-- The semantic system is separated into vector/flavour, association graph, and
+- `rust/src/` keeps the Rust port split into simulation, agent/world model,
+  transcript conversation, reading bridge, and CLI configuration.
+- The Python semantic system is separated into vector/flavour, association graph, and
   family/identity responsibilities.
 
 This makes experiments easier to isolate and reduces the risk that a change in

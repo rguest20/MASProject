@@ -1,0 +1,301 @@
+# Write a completed Ryan line below and save the file.  In watch mode the
+# community will append one answer after a short thinking period, followed by
+# a new blank Ryan prompt.  It currently understands controlled forms:
+#
+# Any other Ryan sentence, including "Hello", is passed to the community as
+# exploratory tokens.  It will answer in its own learned language rather than
+# with a hard-coded English reply.
+#
+# Ryan: Hello
+# Ryan: Help
+# Ryan: How many is 12?
+# Ryan: Show r3
+# Ryan: Do a2 to r3 with 4
+# Ryan: Teach r3 is apple
+# Ryan: Teach a2 means move
+# Ryan: What did you do?
+
+Ryan: Hello
+Community: hello greeting salutation.
+Ryan: Nice to meet you.  My name is Ryan.  Your name is Community.
+Community: name is ryan your you my.
+Ryan: How are you feeling today?
+Community: feeling today.
+Ryan: I am well. 
+Community: well considerably substantially i am wellspring.
+Ryan: What do you want to talk about?
+Community: want to talk about.
+Ryan: I am watching a game
+Community: watching a game.
+Ryan: The game is cricket, where people hit balls with a bat.
+Community: cricket where people hit balls with.
+Ryan: The winners hit the balls the best.
+Community: winners hit the balls.
+Ryan: The losers miss the ball
+Community: losers miss the ball.
+Ryan: What is a winner?
+Community: winner gambler.
+Ryan: No, I think you are pulling a bad association.
+Community: think you are pulling a bad.
+Ryan: Try again.
+Community: try again.
+Ryan: What is a winner.
+Community: winner contestant.
+Ryan: A winner is the person who wins.
+Community: winner is the person who wins.
+Ryan: Yes.
+Community: yes no.
+Ryan: What is a loser?
+Community: loser winner is a bat.
+Ryan: Nice try.  A loser does not hit the ball
+Community: loser does not hit the ball.
+Ryan: Yes. Well done!
+Community: done practice.
+Ryan: You are practicing well.
+Community: practicing well.
+Ryan: Do you want to know more?
+Community: know more to do you want.
+Ryan: The bowler is the one who throws the ball. The batter hits it.
+Community: bowler is the ball batter hits.
+Ryan: The ball is what the batter hits.
+Community: ball is what the batter hits.
+Ryan: Yes, well done.  I like to bowl as I am a bowler.
+Community: like to bowl as i am.
+Ryan: Sometimes I manage to bowl well.
+Community: sometimes i manage to bowl well.
+Ryan: Copying me.  Fair enough.
+Community: copying.
+Ryan: Try to use your words
+Community: use your words.
+Ryan: Try again
+Community: try a winner is the ball.
+Ryan: The winner wins.
+Community: try again.
+Ryan: Cheeky.  A winner is the one who hits the ball the most.
+Community: try a winner is the one.
+Ryan: Lets start again.
+Community: lets start again.
+Ryan: Lets talk about food.  Food is needed to live
+Community: food is needed to live.
+Ryan: I like food.
+Community: food is needed to.
+Ryan: Examples of food are Apples, Bananas and Chips.
+Community: food are apples bananas and chips.
+Ryan: That's right.  An apple is green.  Bananas are yellow
+Community: that's right an apple is green.
+Ryan: What is green
+Community: green.
+Ryan: true, but what food is green
+Community: food is green bananas and chips.
+Ryan: Bananas are yellow.  Apples are green. 
+Community: green bananas are yellow apples is.
+Ryan: What is an apple.
+Community: green bananas are yellow apples an.
+Ryan: apples are green
+Community: green bananas are yellow apples is.
+Ryan: no
+Community: green bananas are yellow apples is.
+Ryan: no, bananas are yellow
+Community: green bananas are yellow apples is.
+Ryan: Are you stuck
+Community: green bananas are yellow apples.
+Ryan: Let it go.
+Community: let it.
+Ryan: okay.
+Community: okay right.
+Ryan: Yes, can we try again.  What is an apple.
+Community: apple is an try again what.
+Ryan: No, an apple is green
+Community: green bananas are yellow apples no.
+Ryan: This a weird failure
+Community: this a weird failure.
+Ryan: What is a banana
+Community: banana herbaceous no an apple is.
+Ryan: bananas are yellow
+Community: bananas are yellow.
+Ryan: yes! well done
+Community: bananas are yellow.
+Ryan: Apples are green
+Community: green bananas are yellow apples apple.
+Ryan: no.  Apples are green
+Community: green bananas are yellow apples an.
+Ryan:
+
+
+Community: hello greeting salutation.
+Ryan: How are you?
+Community: hello salutation greeting.
+Ryan: Are you okay?
+Community: okay all.
+Ryan: Good.  I'm glad to hear it.  My name is Ryan.  It is nice to meet you.
+Community: good i'm glad.
+Ryan: Do you know your name?
+Community: know your name.
+Ryan: What is your name
+Community: name is your ryan it my.
+Ryan: My name is Ryan, well done
+Community: name is ryan well done.
+Ryan: Well done means you have done good.
+Community: name is ryan well done good.
+Ryan: Close, try again
+Community: close try again.
+Ryan: Keep going
+Community: keep going on.
+Ryan: Your name is Community
+Community: community biotic my name is ryan.
+Ryan: Ryan is me.
+Community: ryan is.
+Ryan: Shall we have a new conversation?
+Community: shall.
+Ryan: Excellent.  Lets talk about football
+Community: excellent lets talk about football.
+Ryan: Football is a game with a ball
+Community: game with a ball.
+Ryan: It also has a goal that the players want to hit the ball into
+Community: also has a goal that the.
+Ryan: Where do you think the ball goes?
+Community: think the ball goes.
+Ryan: It goes in the goal
+Community: goes in the players want to.
+Ryan: Yes the players want the ball to go in the goal
+Community: goes in the goal that also.
+Ryan: The winners get the most goals
+Community: goes in the ball to go.
+Ryan: + they get the ball in the goal
+Community: goes in the goal that get.
+Ryan: The losers get less goals
+Community: goes in the goal that.
+Ryan: If one side has 1 goal and another has 2 goals which one wins
+Community: one side has goals which.
+Ryan: True, one side does win.
+Community: one side has goal and.
+Ryan: Is 1 or 2 bigger?
+Community: bigger magnanimous.
+Ryan: 2 is bigger
+Community: bigger vainglorious.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: 2 is bigger
+Community: bigger bragging.
+Ryan: are you trying to link words to "bigger"
+Community: bigger small.
+Ryan: bigger is not small
+Community: bigger is or to link words.
+Ryan: I think I've confused you.  sorry.
+Community: i've confused you sorry.
+Ryan: You have no reason to be sorry.
+Community: reason to be sorry.
+Ryan: I made a mistake
+Community: made a mistake.
+Ryan: What do you think a mistake is?
+Community: mistake is a do you think.
+Ryan: good try.  A mistake is when we do something wrong.
+Community: mistake is when.
+Ryan: we do something wrong
+Community: mistake is when.
+Ryan: We try to make it right
+Community: mistake is when.
+Ryan: Try and break out of the loop
+Community: mistake is when.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: Better?
+Community: better substantially.
+Ryan: 
+
+
+Hello
+Community: hello greeting salutation.
+Ryan: How are you today?
+Community: today present.
+Ryan: Today is the present.  I am good. Are you good?  Yes or no?
+Community: good are you today is the.
+Ryan: The word order is a little jumbled.
+Community: word order is a little jumbled.
+Ryan: Are you okay?
+Community: okay right good are.
+Ryan: +
+Community: Feedback accepted for the last community sentence.
+Ryan: Glad to hear it.
+Community: glad.
+Ryan: Do you have any questions for me?
+Community: any questions for.
+Ryan: Yes, is there anything you want to know?
+Community: there anything you want.
+Ryan: We're just repeating...try again
+Community: we're just repeating try again.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: How are you.
+Community: we're just repeating try.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: Are you okay
+Community: okay right good are you present.
+Ryan: I am good today.  Thank you for asking.
+Community: okay right good today thank you.
+Ryan: Keep going. You're doing great.
+Community: keep going you're doing great.
+Ryan: Shall we talk about games?
+Community: shall.
+Ryan: Excellent. I like games.
+Community: excellent i like games.
+Ryan: Games are fun, but someone has to be a winner and someone else a loser.
+Community: someone has to be a winner.
+Ryan: +
+Community: Feedback accepted for the last community sentence.
+Ryan: Being a winner is good.
+Community: someone has to be a winner.
+Ryan: True...
+Community: true.
+Ryan: Being the loser feels bad.
+Community: loser feels bad.
+Ryan: Yes. It is sad.
+Community: sad glad.
+Ryan: They're opposite.
+Community: they're opposite.
+Ryan: Sad is not glad.  Glad is not sad.
+Community: not glad is sad.
+Ryan: yes.
+Community: yes.
+Ryan: +
+Community: Feedback accepted for the last community sentence.
+Ryan: Well done.  Very good.
+Community: yes.
+Ryan: Can you tell me something about yourself?
+Community: something about yourself can you tell.
+Ryan: I am a human. You are not.
+Community: human you are not.
+Ryan: Cheeky
+Community: cheeky nervy.
+Ryan: You are a computer
+Community: computer machine.
+Ryan: +
+Community: Feedback accepted for the last community sentence.
+Ryan: But you are learning.
+Community: learning get.
+Ryan: What would you like to learn?
+Community: would you like to learn.
+Ryan: Try not to just repeat if you see a ?
+Community: repeat if you see a.
+Ryan: we'll work on that.
+Community: we'll work on that.
+Ryan: Back to games.
+Community: back to games punt.
+Ryan: What do you know about games
+Community: games mettlesome.
+Ryan: Do you want to be a winner
+Community: games activity.
+Ryan: Yes, winners play games
+Community: games gritty.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: What about a loser
+Community: games plot.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: Are you okay?
+Community: games are you know about a.
+Ryan: ooh, that looked like a question.
+Community: games are you want to be.
+Ryan: 

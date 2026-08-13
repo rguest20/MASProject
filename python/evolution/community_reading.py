@@ -32,10 +32,14 @@ class CommunityReadingRoom:
         self.recent_indices = deque(maxlen=16)
 
     def _find_corpus(self):
-        for filename in self._FILENAMES:
-            candidate = self.root / filename
-            if candidate.is_file():
-                return candidate
+        # Python-owned corpora live beside this package.  The workspace-level
+        # fallback preserves an existing user corpus while the project moves
+        # into its language-specific directory.
+        for root in (self.root, self.root.parent):
+            for filename in self._FILENAMES:
+                candidate = root / filename
+                if candidate.is_file():
+                    return candidate
         return None
 
     @classmethod
