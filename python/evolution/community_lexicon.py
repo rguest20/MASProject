@@ -182,3 +182,114 @@ class CommunityLexicon:
 
     def referential_support(self, referent):
         return sum(self._referential_evidence.get(referent, {}).values())
+
+    def memory_state(self):
+        """Return the durable, community-owned part of the lexicon.
+
+        Private agent vocabularies deliberately stay out of this snapshot.
+        Keeping the successful evidence, rather than only the winning token,
+        lets a future population retain both a convention and the strength of
+        the evidence that earned it.
+        """
+        return {
+            "numeric_evidence": {
+                str(key): dict(values) for key, values in self._numeric_evidence.items()
+            },
+            "referential_evidence": {
+                str(key): dict(values) for key, values in self._referential_evidence.items()
+            },
+            "action_evidence": {
+                str(key): dict(values) for key, values in self._action_evidence.items()
+            },
+            "base_evidence": {
+                str(key): int(value) for key, value in self._base_evidence["base"].items()
+            },
+            "grammar_evidence": {
+                str(task_type): [
+                    {"order": list(order), "support": int(support)}
+                    for order, support in evidence.items()
+                ]
+                for task_type, evidence in self._grammar_evidence.items()
+            },
+        }
+
+    def restore_memory_state(self, state):
+        """Restore validated convention evidence from a JSON-safe snapshot."""
+        if not isinstance(state, dict):
+            return
+
+        def restore_token_evidence(source, target, key_parser=lambda key: key):
+            if not isinstance(source, dict):
+                return
+            for raw_key, votes in source.items():
+                try:
+                    key = key_parser(raw_key)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(votes, dict):
+                    continue
+                for token, support in votes.items():
+                    clean = self._clean_token(token)
+                    if clean is None:
+                        continue
+                    try:
+                        support = max(0, min(int(support), 1_000_000))
+                    except (TypeError, ValueError):
+                        continue
+                    if support:
+                        target[key][clean] += support
+
+        restore_token_evidence(
+            state.get("numeric_evidence"), self._numeric_evidence, int
+        )
+        restore_token_evidence(
+            state.get("referential_evidence"), self._referential_evidence
+        )
+        restore_token_evidence(
+            state.get("action_evidence"), self._action_evidence
+        )
+
+        base_evidence = state.get("base_evidence")
+        if not isinstance(base_evidence, dict):
+            base_evidence = {}
+        for raw_base, support in base_evidence.items():
+            try:
+                base = int(raw_base)
+                support = max(0, min(int(support), 1_000_000))
+            except (TypeError, ValueError):
+                continue
+            if base >= 2 and support:
+                self._base_evidence["base"][base] += support
+
+        grammar_evidence = state.get("grammar_evidence")
+        if not isinstance(grammar_evidence, dict):
+            grammar_evidence = {}
+        for task_type, records in grammar_evidence.items():
+            task_type = self._clean_token(task_type)
+            if task_type is None or not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                order = tuple(
+                    token for token in (self._clean_token(token) for token in record.get("order", []))
+                    if token is not None
+                )
+                try:
+                    support = max(0, min(int(record.get("support", 0)), 1_000_000))
+                except (TypeError, ValueError):
+                    continue
+                if order and support:
+                    self._grammar_evidence[task_type][order] += support
+
+        # Recompute public conventions from the restored evidence.  This
+        # preserves the ordinary confidence and replacement safeguards.
+        for digit in self._numeric_evidence:
+            self.numeric_token(digit)
+        for referent in self._referential_evidence:
+            self.referential_signal(referent)
+        for action in self._action_evidence:
+            self.action_signal(action)
+        self.community_base()
+        for task_type in self._grammar_evidence:
+            self.grammar_order(task_type)

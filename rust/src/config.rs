@@ -10,6 +10,9 @@ pub struct RunOptions {
     pub delay_ms: u64,
     pub converse_path: PathBuf,
     pub seed: Option<u64>,
+    pub dimensions: Option<usize>,
+    pub community_memory_path: Option<PathBuf>,
+    pub use_community_memory: bool,
 }
 
 impl Default for RunOptions {
@@ -21,6 +24,9 @@ impl Default for RunOptions {
             // Commands in the root README run Cargo from the workspace root.
             converse_path: PathBuf::from("converse.txt"),
             seed: None,
+            dimensions: None,
+            community_memory_path: None,
+            use_community_memory: true,
         }
     }
 }

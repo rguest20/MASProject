@@ -18,6 +18,7 @@ from evolution.logging import compute_generation_summary, append_generation_to_c
 from evolution.programs import run_program, safe
 from evolution.mixins.global_registry import GlobalTokenRegistry
 from evolution.community_lexicon import CommunityLexicon
+from evolution.community_memory import CommunityMemory
 from evolution.human_dictionary import HumanDictionary
 from evolution.community_reading import CommunityReadingRoom
 from evolution.coordinator_settings import (
@@ -52,7 +53,7 @@ from evolution.mixins.coordinator_generation_mixin import CoordinatorGenerationM
 from evolution.mixins.coordinator_semantic_mixin import CoordinatorSemanticMixin
 
 class Coordinator(CoordinatorGenerationMixin, CoordinatorSemanticMixin, CoordinatorEvolutionMixin, CoordinatorTaskMixin, CoordinatorLanguageMixin):
-    def __init__(self, run_dir=None, seed=None, conversation_path=None):
+    def __init__(self, run_dir=None, seed=None, conversation_path=None, community_memory_path=None, use_community_memory=True):
         """Create an isolated, reproducible simulation run.
 
         Each coordinator owns its reports and sandbox state under a unique
@@ -167,6 +168,13 @@ class Coordinator(CoordinatorGenerationMixin, CoordinatorSemanticMixin, Coordina
             "last_update_gen": 0
         }
 
+        workspace_root = Path(__file__).resolve().parents[2]
+        self.community_memory_path = Path(
+            community_memory_path or workspace_root / "community_memory" / f"python-d{project_config.DIMS}.json"
+        )
+        self.community_memory = CommunityMemory(self.community_memory_path) if use_community_memory else None
+        self.community_memory_status = {"loaded": False, "tokens": 0, "seeded_agents": 0}
+
         # Build sandbox world + per-agent private FS and APIs
         spec = SandboxSpec(
             root=str(self.run_dir / "sandbox"),
@@ -194,6 +202,9 @@ class Coordinator(CoordinatorGenerationMixin, CoordinatorSemanticMixin, Coordina
                     a.semantic_system.receive_semantic_seeds(self.semantic_seeds)
             except Exception:
                 pass
+
+        if self.community_memory is not None:
+            self.community_memory_status = self.community_memory.restore(self)
 
         # identity grounding for all agents
         for a in self.agents:
@@ -241,6 +252,9 @@ class Coordinator(CoordinatorGenerationMixin, CoordinatorSemanticMixin, Coordina
         }
 
         self.completed_tasks = []
+        # Rewrite metadata once optional community memory has been restored,
+        # so the run records the actual provenance of its public priors.
+        self._write_run_metadata()
 
     @staticmethod
     def _config_snapshot(module):
@@ -291,6 +305,10 @@ class Coordinator(CoordinatorGenerationMixin, CoordinatorSemanticMixin, Coordina
                 "cultural_log": str(self.csv_path),
                 "dialogue_log": str(self.dialogue_log_path),
                 "sandbox": str(self.run_dir / "sandbox"),
+            },
+            "community_memory": {
+                "path": str(getattr(self, "community_memory_path", "")),
+                "loaded": getattr(self, "community_memory_status", {}).get("loaded", False),
             },
             "config": self._config_snapshot(project_config),
             "coordinator_settings": self._config_snapshot(coordinator_settings),

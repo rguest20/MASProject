@@ -8,6 +8,7 @@ from agents.cognition.semantic_utils import (
     rand_vec, add, sub, scale, cos_sim,
 )
 from agents.agent_constants import SYLLABLES
+from config import DIMS
 
 
 class SemanticInitialisationMixin:
@@ -87,9 +88,9 @@ class SemanticInitialisationMixin:
             # Try to infer dimension from existing vecs, else fall back to 32
             if sem["vecs"]:
                 some_vec = next(iter(sem["vecs"].values()))
-                dim = len(some_vec) if isinstance(some_vec, (list, tuple)) else 32
+                dim = len(some_vec) if isinstance(some_vec, (list, tuple)) else DIMS
             else:
-                dim = 32
+                dim = DIMS
 
             def _att():
                 # smallish random vector so the field is gentle
@@ -169,7 +170,7 @@ class SemanticInitialisationMixin:
         
         # --- Flavour drift axes (stable random directions) ---
         if not hasattr(self, "flavour_axes"):
-            dim = 32
+            dim = DIMS
             self.flavour_axes = {
                 "objectness": np.random.normal(size=dim),
                 "processness": np.random.normal(size=dim),
@@ -183,7 +184,7 @@ class SemanticInitialisationMixin:
                 v = self.flavour_axes[k]
                 self.flavour_axes[k] = v / (np.linalg.norm(v) + 1e-9)
 
-        dim = 32  # semantic dimension for local random init
+        dim = DIMS  # semantic dimension for local random init
 
         def _local_randvec():
             import random
@@ -211,7 +212,7 @@ class SemanticInitialisationMixin:
             v = v * (max_norm / n)
         return v.tolist()
 
-    def _rand_vec(self, dim=32):
+    def _rand_vec(self, dim=DIMS):
         """Wrapper so all mixins can request random semantic vectors."""
         if hasattr(self, "semantic_system"):
             # SemanticSystem already respects configured semantic_dim

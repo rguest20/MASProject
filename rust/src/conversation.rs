@@ -21,11 +21,15 @@ pub struct Conversation {
     next_intent_mode: usize,
     working_frame: Option<WorkingFrame>,
     parked_frames: VecDeque<WorkingFrame>,
-    response_history: VecDeque<Vec<String>>,
     reply_feedback: BTreeMap<String, f64>,
     bigram_feedback: BTreeMap<(String, String), f64>,
     dictionary_links: Vec<(String, String, f32)>,
+    // A word that is new to the conversation can borrow a small number of
+    // nearby, *community-selected* concepts.  These are semantic evidence,
+    // not prewritten reply templates.
+    horizon_links: BTreeMap<String, BTreeMap<String, f64>>,
     active_topic: Option<String>,
+    last_prompt_generation: Option<usize>,
     last_reply: Option<String>,
     positive_feedback: usize,
     negative_feedback: usize,
@@ -76,11 +80,12 @@ impl Conversation {
             next_intent_mode: 1,
             working_frame: None,
             parked_frames: VecDeque::with_capacity(4),
-            response_history: VecDeque::with_capacity(8),
             reply_feedback: BTreeMap::new(),
             bigram_feedback: BTreeMap::new(),
             dictionary_links: Vec::new(),
+            horizon_links: BTreeMap::new(),
             active_topic: None,
+            last_prompt_generation: None,
             last_reply: None,
             positive_feedback: 0,
             negative_feedback: 0,
@@ -118,7 +123,11 @@ impl Conversation {
             });
             return Ok(None);
         }
-        let pending = self.pending.as_ref().expect("pending prompt was just set");
+        let pending = self
+            .pending
+            .as_ref()
+            .expect("pending prompt was just set")
+            .clone();
         // Match Python's small settling window: every member gets time to
         // observe the same human line before the community writes back.
         if generation.saturating_sub(pending.first_seen_generation) < 2 {
@@ -130,8 +139,10 @@ impl Conversation {
             self.pending = None;
             return Ok(None);
         }
-        let prompt = pending.prompt.body.clone();
+        let prompt = pending.prompt.body;
+        self.expire_stale_context(generation);
         let reply = self.answer(&prompt, world, lexicon, reading, dictionary, agents, rng);
+        self.last_prompt_generation = Some(generation);
         let mut file = OpenOptions::new().append(true).open(&self.path)?;
         if !pending.transcript.ends_with('\n') {
             writeln!(file)?;
@@ -140,7 +151,6 @@ impl Conversation {
         writeln!(file, "Ryan: ")?;
         self.pending = None;
         if !is_feedback(&prompt) {
-            self.record_response(&reply);
             self.last_reply = Some(reply.clone());
         }
         Ok(Some(reply))
@@ -194,28 +204,19 @@ impl Conversation {
         self.update_conversation_state(trimmed, &words);
 
         if let Some(number) = parse_number_question(trimmed) {
-            return lexicon
-                .numeric_token(number)
-                .map(|token| format!("{number} is '{token}' in our shared number system."))
-                .unwrap_or_else(|| {
-                    "We do not yet have a community answer for that quantity.".to_string()
-                });
+            if let Some(token) = lexicon.numeric_token(number) {
+                return format!("{number} is '{token}' in our shared number system.");
+            }
         }
         if let Some(referent) = parse_show(trimmed) {
-            return lexicon
-                .referential_signal(referent)
-                .map(|token| format!("{referent} is '{token}' in our shared vocabulary."))
-                .unwrap_or_else(|| {
-                    format!("We have not yet agreed a public word for {referent}.")
-                });
+            if let Some(token) = lexicon.referential_signal(referent) {
+                return format!("{referent} is '{token}' in our shared vocabulary.");
+            }
         }
         if let Some(subject) = parse_world_question(&words) {
-            return world
-                .fact(subject)
-                .map(|property| format!("{subject} is {property}."))
-                .unwrap_or_else(|| {
-                    format!("We do not yet have a confirmed fact about {subject}.")
-                });
+            if let Some(property) = world.fact(subject) {
+                return format!("{subject} is {property}.");
+            }
         }
 
         if let Some((subject, property)) = parse_assertion(&words) {
@@ -226,7 +227,7 @@ impl Conversation {
         // Free conversation must pass through the community proposal/vote
         // path. In particular, a story word is evidence for a continuation,
         // not permission to emit the fixed "X and Y are related" sentence.
-        self.compose_reply(&words, topic.as_deref(), reading, agents, rng)
+        self.compose_reply(&words, topic.as_deref(), reading, dictionary, agents, rng)
     }
 
     fn ingest(
@@ -274,15 +275,13 @@ impl Conversation {
                 self.dictionary_links.push((word.clone(), antonym, -0.10));
             }
             for (left, right) in evidence.category_bigrams {
-                // Dictionary phrases are semantic scaffolding.  They need
-                // repeated human evidence or feedback before becoming a
-                // productive continuation.
+                // Preserve phrase-level evidence for semantic reporting, but
+                // do not put its words in the human chat pool. A dictionary
+                // gloss must not quietly become a response template.
                 *self
                     .meaning_bigrams
                     .entry((left.clone(), right.clone()))
                     .or_default() += 0.35;
-                *self.human_pool.entry(left).or_default() += 0.12;
-                *self.human_pool.entry(right).or_default() += 0.12;
             }
         }
         // Human wording is the authoritative conversational evidence.  Each
@@ -298,12 +297,11 @@ impl Conversation {
         self.decay_conversation_evidence();
         let shape = sentence_shape(prompt, words);
         let mode = self.choose_intent_mode(&shape, words);
-        let topic = statement_subject(words)
-            .map(str::to_owned)
-            .or_else(|| words.iter().find(|word| is_topic(word)).cloned());
-        if let Some(topic) = topic.as_ref() {
-            self.active_topic = Some(topic.clone());
-        }
+        let topic = infer_topic(words).map(str::to_owned);
+        // An unanchored turn is allowed to release the old attractor. Keeping
+        // the last topic here made questions such as "who are you?" inherit
+        // whichever story word happened to be active earlier.
+        self.active_topic = topic.clone();
         let profile = self.intent_modes.entry(mode.clone()).or_default();
         profile.uses += 1;
         *profile.shapes.entry(shape).or_default() += 1.0;
@@ -367,7 +365,7 @@ impl Conversation {
         let switched = self
             .working_frame
             .as_ref()
-            .is_some_and(|frame| topic.is_some() && frame.topic != topic);
+            .is_some_and(|frame| frame.topic != topic);
         if switched {
             if let Some(frame) = self.working_frame.take()
                 && !frame.tokens.is_empty()
@@ -418,29 +416,54 @@ impl Conversation {
     }
 
     fn compose_reply(
-        &self,
+        &mut self,
         prompt_words: &[String],
         topic: Option<&str>,
         reading: &ReadingBridge,
-        agents: &[Agent],
+        dictionary: &mut HumanDictionary,
+        agents: &mut [Agent],
         rng: &mut Rng,
     ) -> String {
-        let Some(frame) = self.working_frame.as_ref() else {
-            return "We need more context before we can answer.".to_string();
-        };
         let first = topic
             .map(str::to_owned)
-            .or_else(|| prompt_words.iter().find(|word| is_topic(word)).cloned());
+            .or_else(|| prompt_words.iter().find(|word| is_topic(word)).cloned())
+            .or_else(|| prompt_words.last().cloned());
         let Some(first) = first else {
-            return "We need more context before we can answer.".to_string();
+            return String::new();
         };
-        let mut allowed: BTreeSet<_> = frame.tokens.keys().cloned().collect();
-        allowed.extend(self.human_pool.keys().cloned());
+        let Some(mut allowed) = self
+            .working_frame
+            .as_ref()
+            .map(|frame| frame.tokens.keys().cloned().collect::<BTreeSet<_>>())
+        else {
+            return String::new();
+        };
         allowed.extend(prompt_words.iter().cloned());
         allowed.insert(first.clone());
         let anchors = allowed.clone();
         let reading_words = reading.relevant_word_scores(&anchors);
         allowed.extend(reading_words.keys().cloned());
+
+        // If the local conversation cannot continue from this word, widen
+        // the agents' own semantic horizon. The dictionary may contribute
+        // nearby candidates, but it never supplies a reply template.
+        let has_local_continuation = self.working_frame.as_ref().is_some_and(|frame| {
+            frame
+                .transitions
+                .get(&first)
+                .is_some_and(|next| !next.is_empty())
+        }) || self
+            .transitions
+            .get(&first)
+            .is_some_and(|next| !next.is_empty())
+            || !reading.relevant_continuations(&first, &allowed).is_empty();
+        if !has_local_continuation {
+            allowed.extend(self.expand_horizon(&first, dictionary, agents, rng));
+        }
+        let frame = self
+            .working_frame
+            .as_ref()
+            .expect("working frame remains available while composing");
 
         // Every member proposes a short continuation from the same observed
         // sentence graph.  Private vocabularies make the proposals differ;
@@ -454,6 +477,7 @@ impl Conversation {
                 while words.len() < target_length {
                     let previous = words.last().expect("proposal is non-empty");
                     let mut candidates = self.promoted_continuations(previous, &allowed);
+                    candidates.extend(self.horizon_continuations(previous, &allowed));
                     candidates.extend(
                         frame
                             .transitions
@@ -501,19 +525,28 @@ impl Conversation {
                     };
                     words.push(next);
                 }
-                (words.len() >= 3).then(|| words.join(" "))
+                // A newly expanded horizon may have only one viable bridge
+                // so far. It is still a community-authored attempt, and it
+                // gives later turns something concrete to reinforce or
+                // correct instead of declining to try.
+                (words.len() >= 2).then(|| words.join(" "))
             })
             .collect();
         if proposals.is_empty() {
-            return topic
-                .map(|topic| format!("We need more context for {topic}."))
-                .unwrap_or_else(|| "We need more context before we can answer.".to_string());
+            return String::new();
         }
         let mut ballot = BTreeMap::<String, usize>::new();
         for voter in agents {
             let chosen = proposals.iter().max_by(|left, right| {
-                self.sentence_score(voter, left, topic, frame, &reading_words)
-                    .partial_cmp(&self.sentence_score(voter, right, topic, frame, &reading_words))
+                self.sentence_score(voter, left, prompt_words, topic, frame, &reading_words)
+                    .partial_cmp(&self.sentence_score(
+                        voter,
+                        right,
+                        prompt_words,
+                        topic,
+                        frame,
+                        &reading_words,
+                    ))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             if let Some(chosen) = chosen {
@@ -526,17 +559,132 @@ impl Conversation {
             .map(|(proposal, _)| proposal)
             .or_else(|| proposals.first().cloned())
             .expect("proposals was checked non-empty");
-        if self
-            .response_history
-            .iter()
-            .any(|old| old.join(" ") == phrase)
-            || self.reply_feedback.get(&phrase).copied().unwrap_or(0.0) < -0.5
-        {
-            return topic
-                .map(|topic| format!("We need a new example about {topic}."))
-                .unwrap_or_else(|| "We need a new example before we can answer.".to_string());
-        }
         format!("{phrase}.")
+    }
+
+    /// Connect an unfamiliar word to concepts the population already has.
+    /// Dictionary entries are one weak source of candidates alongside the
+    /// agents' learned semantic neighbourhoods. The result is deliberately
+    /// returned as a set of possible continuations, not as a sentence.
+    fn expand_horizon(
+        &mut self,
+        word: &str,
+        dictionary: &mut HumanDictionary,
+        agents: &mut [Agent],
+        rng: &mut Rng,
+    ) -> Vec<String> {
+        let word = word.trim().to_ascii_lowercase();
+        if word.is_empty() {
+            return Vec::new();
+        }
+        let mut candidates = BTreeMap::<String, f64>::new();
+        if let Some(evidence) = dictionary.meaning_evidence(&word) {
+            for candidate in evidence
+                .category_tokens
+                .into_iter()
+                .chain(evidence.definition_tokens)
+                .chain(evidence.synonyms)
+            {
+                if candidate != word && is_topic(&candidate) {
+                    *candidates.entry(candidate).or_default() += 0.35;
+                }
+            }
+        }
+        for agent in agents.iter() {
+            for candidate in agent.semantics.nearest(&word, 4) {
+                if candidate != word && is_topic(&candidate) {
+                    *candidates.entry(candidate).or_default() += 0.20;
+                }
+            }
+        }
+        // Even when neither source has an answer, an unfamiliar word should
+        // be allowed to test itself against the community's current map.
+        for candidate in self
+            .human_pool
+            .keys()
+            .filter(|candidate| candidate.as_str() != word && is_topic(candidate))
+        {
+            *candidates.entry(candidate.clone()).or_default() += 0.05;
+        }
+        for agent in agents.iter() {
+            for candidate in agent
+                .vocabulary
+                .iter()
+                .filter(|candidate| candidate.as_str() != word && is_topic(candidate))
+            {
+                *candidates.entry(candidate.clone()).or_default() += 0.02;
+            }
+        }
+        // If no recognisable content word exists yet, use any private token
+        // as an exploratory neighbour. The population still chooses the
+        // bridge; this merely prevents silence from being replaced by a
+        // canned refusal sentence.
+        if candidates.is_empty() {
+            for agent in agents.iter() {
+                for candidate in agent
+                    .vocabulary
+                    .iter()
+                    .filter(|candidate| candidate.as_str() != word)
+                {
+                    *candidates.entry(candidate.clone()).or_default() += 0.01;
+                }
+            }
+        }
+        let mut weighted_candidates: Vec<_> = candidates.into_iter().collect();
+        weighted_candidates.sort_by(|left, right| {
+            right
+                .1
+                .partial_cmp(&left.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        weighted_candidates.truncate(16);
+        if weighted_candidates.is_empty() {
+            return Vec::new();
+        }
+        let candidate_words: Vec<_> = weighted_candidates
+            .iter()
+            .map(|(candidate, _)| candidate.clone())
+            .collect();
+
+        // Give every agent a chance to choose its own bridge. These traces
+        // are weak and decay; they do not become world facts or syntax.
+        let mut selected = BTreeMap::<String, usize>::new();
+        for agent in agents.iter_mut() {
+            let chosen = choose_weighted_word(
+                &candidate_words,
+                |candidate| {
+                    agent
+                        .semantics
+                        .cosine_similarity(&word, candidate)
+                        .unwrap_or(0.0) as f64
+                        + agent.language.salience(candidate).max(0.0)
+                        + weighted_candidates
+                            .iter()
+                            .find(|(known, _)| known == candidate)
+                            .map(|(_, evidence)| *evidence)
+                            .unwrap_or(0.0)
+                        + self
+                            .human_pool
+                            .get(candidate)
+                            .copied()
+                            .unwrap_or(0.0)
+                            .ln_1p()
+                            * 0.10
+                },
+                rng,
+            )
+            .expect("dictionary candidates were checked");
+            agent.observe(&[word.clone(), chosen.clone()], 0.06, rng);
+            self.dictionary_links
+                .push((word.clone(), chosen.clone(), 0.05));
+            *selected.entry(chosen).or_default() += 1;
+        }
+        let links = self.horizon_links.entry(word).or_default();
+        for (candidate, votes) in &selected {
+            *links.entry(candidate.clone()).or_default() += 0.05 * *votes as f64;
+        }
+        selected.into_keys().collect()
     }
 
     fn continuation_score(
@@ -562,7 +710,12 @@ impl Conversation {
         let familiar = agent
             .map(|agent| agent.vocabulary.contains(candidate) as u8 as f64)
             .unwrap_or(0.5);
-        let human_repetition = self.human_pool.get(candidate).copied().unwrap_or(0.0).ln_1p();
+        let human_repetition = self
+            .human_pool
+            .get(candidate)
+            .copied()
+            .unwrap_or(0.0)
+            .ln_1p();
         let personal_salience = agent
             .map(|agent| agent.language.salience(candidate).max(0.0))
             .unwrap_or(0.0);
@@ -579,6 +732,7 @@ impl Conversation {
         &self,
         voter: &Agent,
         sentence: &str,
+        prompt_words: &[String],
         topic: Option<&str>,
         frame: &WorkingFrame,
         reading_words: &BTreeMap<String, f64>,
@@ -640,10 +794,19 @@ impl Conversation {
     fn promoted_continuations(&self, previous: &str, allowed: &BTreeSet<String>) -> Vec<String> {
         self.english_bigrams
             .keys()
-            .chain(self.meaning_bigrams.keys())
             .filter(|pair| pair.0 == previous && allowed.contains(&pair.1))
             .filter(|pair| self.bigram_strength(pair) > 0.0)
             .map(|pair| pair.1.clone())
+            .collect()
+    }
+
+    fn horizon_continuations(&self, previous: &str, allowed: &BTreeSet<String>) -> Vec<String> {
+        self.horizon_links
+            .get(previous)
+            .into_iter()
+            .flat_map(|links| links.iter())
+            .filter(|(candidate, strength)| **strength >= 0.04 && allowed.contains(*candidate))
+            .map(|(candidate, _)| candidate.clone())
             .collect()
     }
 
@@ -669,16 +832,6 @@ impl Conversation {
         }
     }
 
-    fn record_response(&mut self, reply: &str) {
-        let words = tokenise(reply);
-        if words.len() >= 2 {
-            if self.response_history.len() == 8 {
-                self.response_history.pop_front();
-            }
-            self.response_history.push_back(words);
-        }
-    }
-
     fn decay_conversation_evidence(&mut self) {
         self.reply_feedback.retain(|_, score| {
             *score *= 0.995;
@@ -696,8 +849,18 @@ impl Conversation {
             *score *= 0.990;
             *score >= 0.025
         });
+        for links in self.horizon_links.values_mut() {
+            links.retain(|_, strength| {
+                *strength *= 0.94;
+                *strength >= 0.02
+            });
+        }
+        self.horizon_links.retain(|_, links| !links.is_empty());
         self.human_pool.retain(|_, score| {
-            *score *= 0.97;
+            // Conversation is working memory, not a permanent word bag.
+            // Long-term semantic links live in agent/community semantics;
+            // transcript salience should release a topic quickly.
+            *score *= 0.90;
             *score >= 0.025
         });
         for mode in self.intent_modes.values_mut() {
@@ -708,6 +871,26 @@ impl Conversation {
                 decay_counts(next, 0.86);
             }
         }
+    }
+
+    fn expire_stale_context(&mut self, generation: usize) {
+        const CONTEXT_TTL_GENERATIONS: usize = 24;
+        let Some(last_prompt) = self.last_prompt_generation else {
+            return;
+        };
+        if generation.saturating_sub(last_prompt) <= CONTEXT_TTL_GENERATIONS {
+            return;
+        }
+        if let Some(frame) = self.working_frame.take()
+            && !frame.tokens.is_empty()
+        {
+            self.parked_frames.retain(|old| old.topic != frame.topic);
+            if self.parked_frames.len() == 4 {
+                self.parked_frames.pop_front();
+            }
+            self.parked_frames.push_back(frame);
+        }
+        self.active_topic = None;
     }
 }
 
@@ -823,10 +1006,49 @@ fn parse_world_question(words: &[String]) -> Option<&str> {
         && matches!(words[0].as_str(), "what" | "who")
         && matches!(words[1].as_str(), "is" | "are")
     {
-        words.last().map(String::as_str)
+        words
+            .iter()
+            .skip(2)
+            .find(|word| is_topic(word))
+            .map(String::as_str)
     } else {
         None
     }
+}
+
+/// Identify the subject of *this* turn before considering the prior frame.
+/// Markers such as `about` and interrogative auxiliaries let a new topic beat
+/// generic words like `talk`, while the simple statement subject remains the
+/// preferred anchor for grounded assertions.
+fn infer_topic(words: &[String]) -> Option<&str> {
+    for marker in ["about", "called", "named"] {
+        if let Some(index) = words.iter().position(|word| word == marker)
+            && let Some(topic) = words.iter().skip(index + 1).find(|word| is_topic(word))
+        {
+            return Some(topic);
+        }
+    }
+    if matches!(words.first().map(String::as_str), Some("what" | "who"))
+        && matches!(words.get(1).map(String::as_str), Some("is" | "are"))
+    {
+        if let Some(topic) = words.iter().skip(2).find(|word| is_topic(word)) {
+            return Some(topic);
+        }
+    }
+    if matches!(
+        words.first().map(String::as_str),
+        Some("how" | "what" | "who" | "did" | "can")
+    ) {
+        for marker in ["do", "does", "did", "can"] {
+            if let Some(index) = words.iter().position(|word| word == marker)
+                && let Some(topic) = words.iter().skip(index + 1).find(|word| is_topic(word))
+            {
+                return Some(topic);
+            }
+        }
+    }
+    statement_subject(words)
+        .or_else(|| words.iter().find(|word| is_topic(word)).map(String::as_str))
 }
 
 fn statement_subject(words: &[String]) -> Option<&str> {
@@ -856,8 +1078,7 @@ fn is_topic(word: &str) -> bool {
     word.len() > 2
         && !matches!(
             word,
-            "a"
-                | "an"
+            "a" | "an"
                 | "about"
                 | "and"
                 | "are"
@@ -877,6 +1098,10 @@ fn is_topic(word: &str) -> bool {
                 | "of"
                 | "on"
                 | "tell"
+                | "talk"
+                | "think"
+                | "say"
+                | "try"
                 | "the"
                 | "to"
                 | "we"
@@ -892,11 +1117,12 @@ fn is_topic(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Conversation, parse_show, tokenise};
+    use super::{Conversation, is_topic, latest_unanswered, parse_show, tokenise};
     use crate::dictionary::HumanDictionary;
     use crate::lexicon::CommunityLexicon;
     use crate::model::{Agent, Rng, WorldModel};
     use crate::reading::ReadingBridge;
+    use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -939,10 +1165,216 @@ mod tests {
     }
 
     #[test]
+    fn identical_new_ryan_lines_are_distinct_prompts() {
+        let prompt = latest_unanswered("Ryan: hi\nCommunity: hello\nRyan: hi\n")
+            .expect("the second Ryan line is unanswered");
+        assert_eq!(prompt.line_number, 3);
+        assert_eq!(prompt.body, "hi");
+    }
+
+    #[test]
+    fn function_words_do_not_capture_the_discussion_topic() {
+        assert!(!is_topic("can"));
+        assert!(!is_topic("tell"));
+        assert!(!is_topic("you"));
+        assert!(is_topic("answer"));
+    }
+
+    #[test]
+    fn explicit_new_topic_replaces_the_previous_working_frame() {
+        let mut conversation = Conversation::new(PathBuf::from("/private/tmp/unused-converse.txt"));
+        let town = tokenise("The town is quiet.");
+        conversation.update_conversation_state("The town is quiet.", &town);
+        let game = tokenise("Can we talk about a game?");
+        conversation.update_conversation_state("Can we talk about a game?", &game);
+        assert_eq!(conversation.topic(), Some("game"));
+        let frame = conversation
+            .working_frame
+            .as_ref()
+            .expect("new topic frame");
+        assert_eq!(frame.topic.as_deref(), Some("game"));
+        assert!(!frame.tokens.contains_key("town"));
+        assert!(
+            conversation
+                .parked_frames
+                .iter()
+                .any(|frame| frame.topic.as_deref() == Some("town"))
+        );
+    }
+
+    #[test]
+    fn stale_context_is_parked_after_an_idle_generation_gap() {
+        let mut conversation = Conversation::new(PathBuf::from("/private/tmp/unused-converse.txt"));
+        let town = tokenise("The town is quiet.");
+        conversation.update_conversation_state("The town is quiet.", &town);
+        conversation.last_prompt_generation = Some(4);
+        conversation.expire_stale_context(29);
+        assert_eq!(conversation.topic(), None);
+        assert!(conversation.working_frame.is_none());
+        assert!(
+            conversation
+                .parked_frames
+                .iter()
+                .any(|frame| frame.topic.as_deref() == Some("town"))
+        );
+    }
+
+    #[test]
+    fn free_reply_never_uses_the_removed_related_template() {
+        let mut conversation = Conversation::new(PathBuf::from("/private/tmp/unused-converse.txt"));
+        let mut dictionary = HumanDictionary::discover(Path::new("/definitely-not-a-dictionary"));
+        let mut world = WorldModel::default();
+        let lexicon = CommunityLexicon::default();
+        let reading = ReadingBridge::default();
+        let mut rng = Rng::new(91);
+        let mut agents = (0..6)
+            .map(|id| Agent::new(id, &mut rng))
+            .collect::<Vec<_>>();
+        let reply = conversation.answer(
+            "Can you answer?",
+            &mut world,
+            &lexicon,
+            &reading,
+            &mut dictionary,
+            &mut agents,
+            &mut rng,
+        );
+        assert!(!reply.contains(" are related"), "reply was {reply:?}");
+        assert_eq!(conversation.topic(), Some("answer"));
+    }
+
+    #[test]
+    fn unresolved_queries_are_composed_not_replaced_by_a_refusal_template() {
+        let mut conversation = Conversation::new(PathBuf::from("/private/tmp/unused-converse.txt"));
+        let mut dictionary = HumanDictionary::discover(Path::new("/definitely-not-a-dictionary"));
+        let mut world = WorldModel::default();
+        let lexicon = CommunityLexicon::default();
+        let reading = ReadingBridge::default();
+        let mut rng = Rng::new(97);
+        let mut agents = (0..6)
+            .map(|id| Agent::new(id, &mut rng))
+            .collect::<Vec<_>>();
+        let reply = conversation.answer(
+            "What is florp?",
+            &mut world,
+            &lexicon,
+            &reading,
+            &mut dictionary,
+            &mut agents,
+            &mut rng,
+        );
+        assert!(
+            !reply.is_empty(),
+            "an unresolved prompt should still be attempted"
+        );
+        for template in [
+            "We do not yet have a confirmed fact",
+            "I am looking for a concept to connect",
+            "We need a new example",
+        ] {
+            assert!(!reply.contains(template), "reply was {reply:?}");
+        }
+    }
+
+    #[test]
+    fn novel_word_expands_the_community_horizon_without_a_reply_template() {
+        let path = std::env::temp_dir().join(format!(
+            "mas-rust-conversation-lookup-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"QUOKKA":{"MEANINGS":[["Noun","a small marsupial animal",["Small animal"],[]]],"SYNONYMS":[],"ANTONYMS":[]}}"#,
+        )
+        .expect("write dictionary");
+        let mut conversation = Conversation::new(PathBuf::from("/private/tmp/unused-converse.txt"));
+        let mut dictionary = HumanDictionary::at(path.clone());
+        let mut world = WorldModel::default();
+        let lexicon = CommunityLexicon::default();
+        let reading = ReadingBridge::default();
+        let mut rng = Rng::new(93);
+        let mut agents = (0..6)
+            .map(|id| Agent::new(id, &mut rng))
+            .collect::<Vec<_>>();
+        let reply = conversation.answer(
+            "Quokka?",
+            &mut world,
+            &lexicon,
+            &reading,
+            &mut dictionary,
+            &mut agents,
+            &mut rng,
+        );
+        assert!(reply.starts_with("quokka "), "reply was {reply:?}");
+        assert!(!reply.contains("may be"), "reply was {reply:?}");
+        assert!(reply.split_whitespace().count() >= 2, "reply was {reply:?}");
+        assert!(
+            conversation
+                .horizon_links
+                .get("quokka")
+                .is_some_and(|links| !links.is_empty()),
+            "dictionary evidence did not widen the semantic horizon"
+        );
+        assert!(!reply.contains("more context"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn identical_human_turns_are_settled_and_answered_twice() {
+        let path = std::env::temp_dir().join(format!(
+            "mas-rust-conversation-repeat-{}.txt",
+            std::process::id()
+        ));
+        fs::write(&path, "Ryan: echo\n").expect("write transcript");
+        let mut conversation = Conversation::new(path.clone());
+        let mut dictionary = HumanDictionary::discover(Path::new("/definitely-not-a-dictionary"));
+        let mut world = WorldModel::default();
+        let lexicon = CommunityLexicon::default();
+        let reading = ReadingBridge::default();
+        let mut rng = Rng::new(92);
+        let mut agents = (0..6)
+            .map(|id| Agent::new(id, &mut rng))
+            .collect::<Vec<_>>();
+        for generation in 1..=3 {
+            let result = conversation
+                .poll(
+                    generation,
+                    &mut world,
+                    &lexicon,
+                    &reading,
+                    &mut dictionary,
+                    &mut agents,
+                    &mut rng,
+                )
+                .expect("poll transcript");
+            assert_eq!(result.is_some(), generation == 3);
+        }
+        let transcript = fs::read_to_string(&path).expect("read first answer");
+        fs::write(&path, transcript.replace("Ryan: \n", "Ryan: echo\n"))
+            .expect("write repeated prompt");
+        for generation in 4..=6 {
+            let result = conversation
+                .poll(
+                    generation,
+                    &mut world,
+                    &lexicon,
+                    &reading,
+                    &mut dictionary,
+                    &mut agents,
+                    &mut rng,
+                )
+                .expect("poll repeated transcript");
+            assert_eq!(result.is_some(), generation == 6);
+        }
+        let final_text = fs::read_to_string(&path).expect("read second answer");
+        assert_eq!(final_text.matches("Community:").count(), 2);
+        fs::remove_file(path).expect("remove temporary transcript");
+    }
+
+    #[test]
     fn feedback_is_attached_to_the_last_real_response() {
         let mut conversation = Conversation::new(PathBuf::from("/private/tmp/unused-converse.txt"));
         conversation.last_reply = Some("apple is red".to_string());
-        conversation.record_response("apple is red");
         assert!(conversation.apply_feedback(-1.0).contains("rejected"));
         assert!(conversation.reply_feedback["apple is red"] < 0.0);
         assert_eq!(conversation.last_reply.as_deref(), Some("apple is red"));

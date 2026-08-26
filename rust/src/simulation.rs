@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::alignment::{AlignmentMetrics, CommunitySemanticMap};
 use crate::cognition::Action;
+use crate::community_memory::{self, MemoryStatus};
 use crate::config::{POPULATION, RunOptions};
 use crate::conversation::Conversation;
 use crate::dictionary::HumanDictionary;
@@ -18,6 +19,7 @@ use crate::lexicon::CommunityLexicon;
 use crate::model::{Agent, Rng, WorldModel};
 use crate::phase3::{Phase3Runtime, SandboxSpec, Scope};
 use crate::reading::ReadingBridge;
+use crate::semantics::{configure_semantic_dimensions, semantic_dimensions};
 use crate::tasks::{TaskEngine, TaskMetrics};
 
 pub struct Coordinator {
@@ -28,6 +30,9 @@ pub struct Coordinator {
     pub dialogue_path: PathBuf,
     pub reading_path: PathBuf,
     pub summary_path: PathBuf,
+    pub community_memory_path: PathBuf,
+    pub community_memory_status: MemoryStatus,
+    community_memory_enabled: bool,
     generation: usize,
     agents: Vec<Agent>,
     lexicon: CommunityLexicon,
@@ -79,6 +84,10 @@ struct SandboxMetrics {
 
 impl Coordinator {
     pub fn new(options: RunOptions) -> io::Result<Self> {
+        if let Some(dimensions) = options.dimensions {
+            configure_semantic_dimensions(dimensions)
+                .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+        }
         let workspace_root = workspace_root();
         let seed = options.seed.unwrap_or_else(seed_from_clock);
         let run_dir = create_run_dir(&workspace_root.join("rust/runs"), seed)?;
@@ -87,25 +96,47 @@ impl Coordinator {
         let dialogue_path = run_dir.join("dialogue_log.txt");
         let reading_path = run_dir.join("reading_log.txt");
         let summary_path = run_dir.join("run_summary.txt");
-        fs::write(
-            run_dir.join("metadata.json"),
-            format!(
-                "{{\n  \"seed\": {seed},\n  \"implementation\": \"rust\",\n  \"population\": {POPULATION}\n}}\n"
-            ),
-        )?;
+        let community_memory_path = options.community_memory_path.clone().unwrap_or_else(|| {
+            workspace_root.join(format!(
+                "community_memory/rust-d{}.json",
+                semantic_dimensions()
+            ))
+        });
         fs::write(
             &metrics_path,
             "generation,mean_energy,min_energy,max_energy,vocabulary,semantic_links,semantic_families,world_facts,discomfort,reading_bridge,conversation_positive,conversation_negative,dialogue_turns,dialogue_grounded,dialogue_understood,dialogue_requests,request_answers_understood,repairs_resolved,task_attempted,task_solved,task_failed,mean_fitness,best_fitness,trait_diversity,program_diversity,base_diversity,social_degree,alignment_tokens,alignment_repaired\n",
         )?;
-        let lexicon = CommunityLexicon::default();
+        let mut lexicon = CommunityLexicon::default();
         let mut rng = Rng::new(seed);
-        let agents = (0..POPULATION)
+        let mut agents = (0..POPULATION)
             .map(|id| {
                 let mut agent = Agent::new(id, &mut rng);
                 agent.ensure_numeric_semantics(&mut rng);
                 agent
             })
             .collect::<Vec<_>>();
+        let mut community_semantics = CommunitySemanticMap::default();
+        let community_memory_status = if options.use_community_memory {
+            community_memory::restore(
+                &community_memory_path,
+                &mut lexicon,
+                &mut community_semantics,
+                &mut agents,
+                &mut rng,
+            )
+        } else {
+            MemoryStatus::default()
+        };
+        fs::write(
+            run_dir.join("metadata.json"),
+            format!(
+                "{{\n  \"seed\": {seed},\n  \"implementation\": \"rust\",\n  \"population\": {POPULATION},\n  \"semantic_dimensions\": {},\n  \"community_memory\": {{\n    \"path\": {},\n    \"loaded\": {}\n  }}\n}}\n",
+                semantic_dimensions(),
+                serde_json::to_string(&community_memory_path.to_string_lossy())
+                    .expect("memory path is JSON"),
+                community_memory_status.loaded,
+            ),
+        )?;
         let phase3 = Phase3Runtime::build(
             &agents,
             SandboxSpec {
@@ -120,6 +151,9 @@ impl Coordinator {
             dialogue_path,
             reading_path,
             summary_path,
+            community_memory_path,
+            community_memory_status,
+            community_memory_enabled: options.use_community_memory,
             generation: 0,
             agents,
             lexicon,
@@ -128,7 +162,7 @@ impl Coordinator {
             reading: ReadingBridge::load(&workspace_root),
             dictionary: HumanDictionary::discover(&workspace_root),
             tasks: TaskEngine::default(),
-            community_semantics: CommunitySemanticMap::default(),
+            community_semantics,
             phase3,
             rng,
             discomfort: 0.0,
@@ -194,7 +228,20 @@ impl Coordinator {
             &evolution_metrics,
             &alignment_metrics,
         )?;
+        self.persist_community_memory()?;
         Ok(())
+    }
+
+    fn persist_community_memory(&self) -> io::Result<()> {
+        if !self.community_memory_enabled {
+            return Ok(());
+        }
+        community_memory::save(
+            &self.community_memory_path,
+            self.generation,
+            &self.lexicon,
+            &self.community_semantics,
+        )
     }
 
     fn run_agent_dialogues(&mut self) -> io::Result<DialogueMetrics> {

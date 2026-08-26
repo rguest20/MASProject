@@ -1,5 +1,6 @@
 mod alignment;
 mod cognition;
+mod community_memory;
 mod config;
 mod conversation;
 mod dictionary;
@@ -20,11 +21,12 @@ use std::thread;
 use std::time::Duration;
 
 use config::RunOptions;
+use semantics::semantic_dimensions;
 use simulation::Coordinator;
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -- [--generations N] [--watch] [--delay SECONDS] [--converse PATH] [--seed N]"
+        "Usage: cargo run -- [--generations N] [--watch] [--delay SECONDS] [--converse PATH] [--seed N] [--dimensions N] [--community-memory PATH] [--fresh-community]"
     );
 }
 
@@ -61,6 +63,20 @@ fn parse_options() -> Result<RunOptions, String> {
                         .map_err(|_| "--seed must be an unsigned integer")?,
                 );
             }
+            "--dimensions" => {
+                options.dimensions = Some(
+                    args.next()
+                        .ok_or("--dimensions needs a value")?
+                        .parse()
+                        .map_err(|_| "--dimensions must be a positive integer")?,
+                );
+            }
+            "--community-memory" => {
+                options.community_memory_path = Some(PathBuf::from(
+                    args.next().ok_or("--community-memory needs a path")?,
+                ));
+            }
+            "--fresh-community" => options.use_community_memory = false,
             "--help" | "-h" => {
                 print_usage();
                 std::process::exit(0);
@@ -90,6 +106,18 @@ fn main() {
     println!("Run directory: {}", coordinator.run_dir.display());
     println!("Seed: {}", coordinator.seed);
     println!("Conversation: {}", options.converse_path.display());
+    println!("Semantic dimensions: {}", semantic_dimensions());
+    if options.use_community_memory {
+        println!(
+            "Community memory: {} (loaded={}; tokens={}; seeded={})",
+            coordinator.community_memory_path.display(),
+            coordinator.community_memory_status.loaded,
+            coordinator.community_memory_status.tokens,
+            coordinator.community_memory_status.seeded_tokens,
+        );
+    } else {
+        println!("Community memory: disabled for this run");
+    }
 
     if options.watch {
         println!("Watch mode is running. Edit converse.txt, then stop with Ctrl-C.");

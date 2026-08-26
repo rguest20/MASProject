@@ -18,7 +18,7 @@ experimentation loop:
   peer consensus, gentle correction, and replayed disagreement trials;
 - rotating maturity-gated narrative, prediction, proto-role, reconstruction,
   property, compatibility, and misunderstanding-repair practices;
-- per-agent 32-dimensional `ndarray` semantic vectors, bounded weighted
+- per-agent tunable `ndarray` semantic vectors (32 dimensions by default), bounded weighted
   association graphs, numerical-token isolation, decay, gravity, and
   anti-monopoly stabilisation, plus confidence-gated semantic families;
 - an EM-style community semantic map with coverage/dispersion confidence and
@@ -58,6 +58,17 @@ Run it from the workspace root:
 cargo run --manifest-path rust/Cargo.toml -- --generations 30 --seed 12345
 cargo run --manifest-path rust/Cargo.toml -- --watch --converse converse.txt
 ```
+
+The Rust runner persists its public community centroids and evidence-backed
+lexicon to `community_memory/rust-d32.json` after each completed generation. A
+separate memory file is selected for each semantic dimensionality. New
+runs have fresh agents but seed confident public concepts as a gentle prior.
+Use `--community-memory PATH` to select a file or `--fresh-community` for an
+isolated run that neither loads nor writes community memory.
+
+Semantic dimensionality is tunable with `--dimensions N` (8–256, default 32).
+Try 64 first for larger experiments; higher dimensions cost proportionally more
+vector work and need more evidence before meaningful geometry emerges.
 
 The Rust implementation is intentionally a clean reimplementation rather than
 a line-for-line translation. Python remains the executable behavioural

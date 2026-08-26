@@ -4,8 +4,10 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use ndarray::Array1;
+use serde_json::{Value, json};
 
 use crate::model::{Agent, Rng};
+use crate::semantics::semantic_dimensions;
 
 #[derive(Clone, Debug)]
 pub struct CommunityToken {
@@ -165,6 +167,130 @@ impl CommunitySemanticMap {
             metrics.mean_distance /= metrics.repaired as f32;
         }
         metrics
+    }
+
+    /// JSON-safe, bounded public centroids. Private agent maps and links are
+    /// intentionally excluded: a later run starts with new individuals.
+    pub fn memory_value(&self) -> Value {
+        let tokens = self
+            .tokens
+            .iter()
+            .map(|(token, item)| {
+                (
+                    token.clone(),
+                    json!({
+                        "vector": item.vector.to_vec(),
+                        "coverage": item.coverage,
+                        "mean_distance": item.mean_distance,
+                        "confidence": item.confidence,
+                        "count": item.count,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        Value::Object(tokens)
+    }
+
+    pub fn restore_memory_value(&mut self, value: &Value) -> usize {
+        let Some(tokens) = value.as_object() else {
+            return 0;
+        };
+        let mut restored = BTreeMap::new();
+        for (raw_token, item) in tokens {
+            let token = raw_token.trim().to_ascii_lowercase();
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            let Some(vector) = item.get("vector").and_then(Value::as_array) else {
+                continue;
+            };
+            if token.is_empty() || vector.len() != semantic_dimensions() {
+                continue;
+            }
+            let values = vector.iter().map(Value::as_f64).collect::<Option<Vec<_>>>();
+            let Some(values) = values else {
+                continue;
+            };
+            if values.iter().any(|value| !value.is_finite()) {
+                continue;
+            }
+            let count = item
+                .get("count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .min(1_000_000) as usize;
+            if count == 0 {
+                continue;
+            }
+            let bounded = |name: &str| {
+                item.get(name)
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite())
+                    .unwrap_or(0.0) as f32
+            };
+            restored.insert(
+                token,
+                CommunityToken {
+                    vector: Array1::from(
+                        values
+                            .into_iter()
+                            .map(|value| value as f32)
+                            .collect::<Vec<_>>(),
+                    ),
+                    coverage: bounded("coverage").clamp(0.0, 1.0),
+                    mean_distance: bounded("mean_distance").clamp(0.0, 100.0),
+                    confidence: bounded("confidence").clamp(0.0, 1.0),
+                    count,
+                    age: 0,
+                },
+            );
+        }
+        if restored.len() > 512 {
+            let mut ranked: Vec<_> = restored
+                .iter()
+                .map(|(token, item)| (token.clone(), item.confidence, item.count))
+                .collect();
+            ranked.sort_by(|left, right| {
+                right
+                    .1
+                    .partial_cmp(&left.1)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| right.2.cmp(&left.2))
+            });
+            ranked = ranked.into_iter().take(512).collect();
+            let allowed: std::collections::BTreeSet<_> =
+                ranked.into_iter().map(|(token, _, _)| token).collect();
+            restored.retain(|token, _| allowed.contains(token));
+        }
+        self.tokens = restored;
+        self.tokens.len()
+    }
+
+    /// Seed only confident public concepts into an otherwise fresh population.
+    pub fn seed_agents(&self, agents: &mut [Agent], rng: &mut Rng) -> usize {
+        let mut seeds: Vec<_> = self
+            .tokens
+            .iter()
+            .filter(|(_, item)| item.confidence >= 0.35)
+            .collect();
+        seeds.sort_by(|left, right| {
+            right
+                .1
+                .confidence
+                .partial_cmp(&left.1.confidence)
+                .unwrap_or(Ordering::Equal)
+        });
+        seeds.truncate(256);
+        for agent in agents {
+            for (token, item) in &seeds {
+                let strength = 0.18 + 0.32 * item.confidence;
+                agent
+                    .semantics
+                    .blend_from(token, &item.vector, strength, rng);
+                agent.vocabulary.insert((*token).clone());
+            }
+        }
+        seeds.len()
     }
 }
 

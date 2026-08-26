@@ -56,6 +56,31 @@ creates a timestamped directory under `python/runs/` or `rust/runs/`; it does
 not overwrite a previous experiment. The command prints the report, CSV,
 dialogue log, and metadata paths when it finishes.
 
+### Community Memory Across Runs
+
+By default, each implementation also maintains a separate durable public map:
+`community_memory/python-d32.json` or `community_memory/rust-d32.json`. A
+separate file is automatically selected for every dimensionality. It retains
+high-confidence, dimension-matched community centroids and evidence-backed public
+numeric, referential, action, base, and grammar conventions. A new run still
+creates fresh agents, then gives them a gentle prior from only the confident
+public concepts—private memories, identities, fitness, and social links are
+never carried over.
+
+```bash
+# Use a different memory file for an experiment.
+python3 python/run.py --community-memory /tmp/my-community.json
+cargo run --manifest-path rust/Cargo.toml -- --community-memory /tmp/my-community.json
+
+# Try a larger semantic space. Start with 64 rather than jumping straight to 256.
+python3 python/run.py --dimensions 64
+cargo run --manifest-path rust/Cargo.toml -- --dimensions 64
+
+# Run a fully isolated experiment without reading or changing saved memory.
+python3 python/run.py --fresh-community
+cargo run --manifest-path rust/Cargo.toml -- --fresh-community
+```
+
 Useful options:
 
 ```bash
@@ -179,7 +204,7 @@ Mitigation currently relies on continuous monitoring and resetting, as each run 
 ## 1. Agent Core
 Each agent maintains:
 
-- A **32-dimensional semantic map** storing vector embeddings (“tokens”) for concepts, numbers, behaviours, and linguistic fragments  
+- A tunable semantic map (32 dimensions by default) storing vector embeddings (“tokens”) for concepts, numbers, behaviours, and linguistic fragments
 - A set of **traits** defining personality biases (talkativeness, curiosity, precision, etc.)  
 - A **local memory** tracking token reinforcement, decay, and drift  
 

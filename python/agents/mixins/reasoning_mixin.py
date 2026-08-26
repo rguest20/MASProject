@@ -1,6 +1,7 @@
 # agents/mixins/reasoning_mixin.py
 import math
 import random
+from config import DIMS
 
 
 class ReasoningMixin:
@@ -65,7 +66,7 @@ class ReasoningMixin:
         if vecs:
             dim = len(next(iter(vecs.values())))
         else:
-            dim = 32
+            dim = DIMS
 
         vecs[tok] = self.semantic_system._randvec()
 

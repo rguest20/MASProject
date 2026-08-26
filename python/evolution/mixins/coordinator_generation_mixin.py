@@ -488,4 +488,10 @@ class CoordinatorGenerationMixin:
         if hasattr(self, "summarize_dialogues"):
             print(self.summarize_dialogues(last_n=50))
 
+        if getattr(self, "community_memory", None) is not None:
+            try:
+                self.community_memory.save(self)
+            except OSError as error:
+                print(f"[COMMUNITY MEMORY ERROR] {error}")
+
         print(f"Generation {self.generation_index} running...")

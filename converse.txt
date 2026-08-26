@@ -15,14 +15,156 @@
 # Ryan: Teach a2 means move
 # Ryan: What did you do?
 
-Ryan: Hi
-Community: We need more context before we can answer.
-Ryan: hello
-Community: We need more context for hello.
-Ryan: hi
-Community: We need more context for hello.
-Ryan: hi there
-Community: We need more context for there.
-Ryan: Can you answer?
-Community: can and all are related.
+Ryan: Hello there
+Community: hello there.
+Ryan: How are you?
+Community: hello there how are you.
+Ryan: I am good thank you.  Are you ok?
+Community: thank you ok i am good.
+Ryan: That's nice.
+Community: that's nice are you ok.
+Ryan: I am very well
+Community: very well i am.
+Ryan: What have you been reading?
+Community: been reading what have you are.
+Ryan: Have you read the little prince?
+Community: read the little prince you ok.
+Ryan: What can you tell me about it?
+Community: read the little prince looked very.
+Ryan: Who is the little prince?
+Community: little prince looked round the swallow.
+Ryan: What did he see around the swallow?
+Community: did he see around the little.
+Ryan: What is a swallow?
+Community: swallow who is a.
+Ryan: Who is the little prince?
+Community: little prince never is the boy.
+Ryan: He's a boy?
+Community: he's a boy who is the.
+Ryan: That's nice
+Community: that's nice the little swallow.
+Ryan: Did he go to the river?
+Community: did he go to the.
+Ryan: the river?
+Community: river there is the little.
+Ryan: Is that where the swallow was?
+Community: where the little prince.
+Ryan: Did he have any flowers?
+Community: did he have any flowers to.
+Ryan: I'm not sure
+Community: i'm not sure what can.
+Ryan: It's okay.
+Community: it's okay swallow who is the.
+Ryan: Who are you?
+Community: it's okay who are all.
+Ryan: You are all?
+Community: all the swallow you are he.
+Ryan: try to say one thing at once.
+Community: try to say one night long.
+Ryan: What happened during the one night
+Community: happened during the one.
+Ryan: was the prince there?
+Community: was the prince.
+Ryan: during the night
+Community: during the little prince you.
+Ryan: Did you read any other stories?
+Community: did you read.
+Ryan: I try to
+Community: try to him the little bird.
+Ryan: Who is the little bird
+Community: little prince there is the town.
+Ryan: What is the town called?
+Community: town called me the little bird.
+Ryan: Did the bird fly over the town
+Community: did you are like the town.
+Ryan: I'm like a town?
+Community: i'm like a town called.
+Ryan: Ah...because i'm called something and the town is called something
+Community: town called something and the little.
+Ryan: I am called Ryan
+Community: called ryan around the town.
+Ryan: I'm called Ryan outside the town too
+Community: i'm called ryan outside the town.
+Ryan: You are community
+Community: community like the town.
+Ryan: That's good.
+Community: that's good thank you are all.
+Ryan: You are a collective
+Community: collective during the little bird fly.
+Ryan: The little bird does fly.
+Community: little bird does fly over a.
+Ryan: What does it fly over?
+Community: fly over to you are.
+Ryan: Hello
+Community: hello there was the town too.
+Ryan: I think we're done with the town.  Can we talk about a game?
+Community: think we're done with me what.
+Ryan: Can we talk about a game
+Community: talk about the town can.
+Ryan: What is a good game
+Community: good heart answered the town.
+Ryan: a good game is cricket
+Community: game is a good.
+Ryan: it is.  Games have winners and losers
+Community: games have read the little girl.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: Games have winners and losers
+Community: games have winners and see.
+Ryan: winners are happy
+Community: winners are happy we talk.
+Ryan: +
+Community: Feedback accepted for the last community sentence.
+Ryan: Losers can be quite sad
+Community: losers can we talk about through.
+Ryan: We can.  Losers have lost the game
+Community: losers have winners are not like.
+Ryan: losers and winners are not the same
+Community: winners are happy and.
+Ryan: losers are sad
+Community: losers have lost the little.
+Ryan: How do losers feel?
+Community: losers feel quite happy we can.
+Ryan: no.  Losers feel sad.
+Community: losers feel sad.
+Ryan: +
+Community: Feedback accepted for the last community sentence.
+Ryan: How do winners feel
+Community: winners are happy.
+Ryan: How do losers feel?
+Community: losers feel sad that.
+Ryan: We can talk about the stories again now.
+Community: talk about the little.
+Ryan: Were you telling me about a prince or a little girl?
+Community: were all about a really.
+Ryan: About both?
+Community: both with little prince you are.
+Ryan: So what did the prince do?
+Community: did the town can talk about.
+Ryan: He went to town?
+Community: went into the people talk about.
+Ryan: Who did he talk to?
+Community: did he talk.
+Ryan: The prince talked to
+Community: prince talked to sleep is the.
+Ryan: -
+Community: Feedback rejected for the last community sentence.
+Ryan: Who went to sleep
+Community: went to other what.
+Ryan: What about sleep
+Community: sleep is said now little swallow.
+Ryan: was he sad?
+Community: was quite happy we are.
+Ryan: That's good
+Community: that's good game is it quite.
+Ryan: We're circling.
+Community: we're circling do losers feel.
+Ryan: Lets reset
+Community: lets reset feel sad.
+Ryan: Don't feel sad
+Community: don't feel sad that the one.
+Ryan: Can we talk about food
+Community: talk about a swallow to.
+Ryan: later.  For now can you tell me about an apple?
+Community: later for now said we talk.
 Ryan: 

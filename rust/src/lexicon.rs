@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+use serde_json::{Value, json};
+
 #[derive(Clone, Debug)]
 pub struct CommunityLexicon {
     min_successes: u32,
@@ -205,6 +207,104 @@ impl CommunityLexicon {
         matches.next().is_none().then_some(first)
     }
 
+    /// Snapshot only the evidence behind public conventions. Private agent
+    /// overlays stay with the run that produced them.
+    pub fn memory_value(&self) -> Value {
+        let grammar = self
+            .grammar_evidence
+            .iter()
+            .map(|(task, evidence)| {
+                (
+                    task.clone(),
+                    Value::Array(
+                        evidence
+                            .iter()
+                            .map(|(order, support)| json!({"order": order, "support": support}))
+                            .collect(),
+                    ),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        json!({
+            "numeric_evidence": self.numeric_evidence,
+            "referential_evidence": self.referential_evidence,
+            "action_evidence": self.action_evidence,
+            "base_evidence": self.base_evidence,
+            "grammar_evidence": grammar,
+        })
+    }
+
+    pub fn restore_memory_value(&mut self, value: &Value) {
+        let Some(value) = value.as_object() else {
+            return;
+        };
+        restore_numeric_evidence(value.get("numeric_evidence"), &mut self.numeric_evidence);
+        restore_string_evidence(
+            value.get("referential_evidence"),
+            &mut self.referential_evidence,
+        );
+        restore_string_evidence(value.get("action_evidence"), &mut self.action_evidence);
+        if let Some(entries) = value.get("base_evidence").and_then(Value::as_object) {
+            for (base, support) in entries {
+                let Ok(base) = base.parse::<u32>() else {
+                    continue;
+                };
+                let support = support.as_u64().unwrap_or(0).min(1_000_000) as u32;
+                if base >= 2 && support > 0 {
+                    *self.base_evidence.entry(base).or_default() += support;
+                }
+            }
+        }
+        if let Some(tasks) = value.get("grammar_evidence").and_then(Value::as_object) {
+            for (task, records) in tasks {
+                let Some(task) = clean_token(task) else {
+                    continue;
+                };
+                for record in records.as_array().into_iter().flatten() {
+                    let Some(order) = record.get("order").and_then(Value::as_array) else {
+                        continue;
+                    };
+                    let order: Vec<_> = order
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter_map(clean_token)
+                        .collect();
+                    let support = record
+                        .get("support")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        .min(1_000_000) as u32;
+                    if !order.is_empty() && support > 0 {
+                        *self
+                            .grammar_evidence
+                            .entry(task.clone())
+                            .or_default()
+                            .entry(order)
+                            .or_default() += support;
+                    }
+                }
+            }
+        }
+        for digit in self.numeric_evidence.keys().copied().collect::<Vec<_>>() {
+            self.refresh_numeric(digit);
+        }
+        for referent in self
+            .referential_evidence
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            self.refresh_referent(&referent);
+        }
+        for action in self.action_evidence.keys().cloned().collect::<Vec<_>>() {
+            self.refresh_action(&action);
+        }
+        self.refresh_base();
+        for task in self.grammar_evidence.keys().cloned().collect::<Vec<_>>() {
+            self.refresh_grammar(&task);
+        }
+    }
+
     fn refresh_numeric(&mut self, digit: u32) -> Option<String> {
         refresh_convention(
             &self.numeric_evidence,
@@ -268,6 +368,51 @@ impl CommunityLexicon {
             self.min_confidence,
             self.replacement_margin,
         )
+    }
+}
+
+fn restore_numeric_evidence(
+    value: Option<&Value>,
+    target: &mut BTreeMap<u32, BTreeMap<String, u32>>,
+) {
+    let Some(entries) = value.and_then(Value::as_object) else {
+        return;
+    };
+    for (key, votes) in entries {
+        let Ok(key) = key.parse::<u32>() else {
+            continue;
+        };
+        restore_votes(votes, target.entry(key).or_default());
+    }
+}
+
+fn restore_string_evidence(
+    value: Option<&Value>,
+    target: &mut BTreeMap<String, BTreeMap<String, u32>>,
+) {
+    let Some(entries) = value.and_then(Value::as_object) else {
+        return;
+    };
+    for (key, votes) in entries {
+        let Some(key) = clean_token(key) else {
+            continue;
+        };
+        restore_votes(votes, target.entry(key).or_default());
+    }
+}
+
+fn restore_votes(value: &Value, target: &mut BTreeMap<String, u32>) {
+    let Some(votes) = value.as_object() else {
+        return;
+    };
+    for (token, support) in votes {
+        let Some(token) = clean_token(token) else {
+            continue;
+        };
+        let support = support.as_u64().unwrap_or(0).min(1_000_000) as u32;
+        if support > 0 {
+            *target.entry(token).or_default() += support;
+        }
     }
 }
 

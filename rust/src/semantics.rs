@@ -7,14 +7,32 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use ndarray::Array1;
 
 use crate::model::Rng;
 
-pub const SEMANTIC_DIMS: usize = 32;
+pub const DEFAULT_SEMANTIC_DIMS: usize = 32;
+pub const MIN_SEMANTIC_DIMS: usize = 8;
+pub const MAX_SEMANTIC_DIMS: usize = 256;
+static SEMANTIC_DIMS: AtomicUsize = AtomicUsize::new(DEFAULT_SEMANTIC_DIMS);
 const MAX_DEGREE: usize = 15;
 const MAX_CONTEXT_TOKENS: usize = 15;
+
+pub fn semantic_dimensions() -> usize {
+    SEMANTIC_DIMS.load(AtomicOrdering::Relaxed)
+}
+
+pub fn configure_semantic_dimensions(dimensions: usize) -> Result<(), String> {
+    if !(MIN_SEMANTIC_DIMS..=MAX_SEMANTIC_DIMS).contains(&dimensions) {
+        return Err(format!(
+            "semantic dimensions must be between {MIN_SEMANTIC_DIMS} and {MAX_SEMANTIC_DIMS}"
+        ));
+    }
+    SEMANTIC_DIMS.store(dimensions, AtomicOrdering::Relaxed);
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub struct SemanticLink {
@@ -85,7 +103,7 @@ impl SemanticStore {
             if vectors.is_empty() {
                 continue;
             }
-            let mut vector = Array1::zeros(SEMANTIC_DIMS);
+            let mut vector = Array1::zeros(semantic_dimensions());
             for source in &vectors {
                 vector += *source;
             }
@@ -267,7 +285,7 @@ impl SemanticStore {
         }
         self.numeric_tokens.insert(token.clone());
         let denominator = base.saturating_sub(1).max(1) as f32;
-        let mut anchor = Array1::zeros(SEMANTIC_DIMS);
+        let mut anchor = Array1::zeros(semantic_dimensions());
         anchor[0] = digit as f32 / denominator * 0.2 + signed(rng, 0.02);
         for value in anchor.iter_mut().skip(1) {
             *value = signed(rng, 0.02);
@@ -687,7 +705,7 @@ fn normalise(token: &str) -> String {
 }
 
 fn random_vector(scale: f32, rng: &mut Rng) -> Array1<f32> {
-    Array1::from_iter((0..SEMANTIC_DIMS).map(|_| signed(rng, scale)))
+    Array1::from_iter((0..semantic_dimensions()).map(|_| signed(rng, scale)))
 }
 
 fn signed(rng: &mut Rng, scale: f32) -> f32 {

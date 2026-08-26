@@ -109,7 +109,7 @@ class SemanticVectorMixin:
         ]
 
     def _semantic_dim(self):
-        return getattr(self, "semantic_dim", 32)
+        return getattr(self, "semantic_dim", DIMS)
 
     def _randvec(self, scale=1.0):
         dim = self._semantic_dim()

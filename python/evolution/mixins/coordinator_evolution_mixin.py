@@ -8,6 +8,7 @@ from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
+from config import DIMS
 
 from agents.agent import Agent
 import config as project_config
@@ -415,7 +416,7 @@ class CoordinatorEvolutionMixin:
                     base += np.array(v, dtype=float)
                 base /= len(vecs)
             else:
-                base = np.array(child._rand_vec(32), dtype=float)
+                base = np.array(child._rand_vec(DIMS), dtype=float)
 
             base += np.random.normal(scale=0.02, size=base.shape)
 

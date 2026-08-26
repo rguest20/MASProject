@@ -10,8 +10,9 @@ import math
 import random
 import re
 from collections import Counter
+from config import DIMS
 
-DIM = 32
+DIM = DIMS
 
 _STOP = set(
     """
