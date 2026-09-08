@@ -101,12 +101,23 @@ has been processed.
 The Rust runner persists public community centroids, confidence-gated
 conceptual relationships, and the evidence-backed lexicon to
 `community_memory/rust-d32.json` after each completed generation. A public
-relationship is an undirected, mature positive association supported across
+relationship is an undirected, mature signed association supported across
 agents; memory is bounded to 2,048 relationships and 12 per concept. New
 runs have fresh agents but seed confident public concepts and weak versions of
 their strongest relationships as a gentle prior. Use `--community-memory PATH`
 to select a file or `--fresh-community` for an isolated run that neither loads
 nor writes community memory.
+
+General semantic links accumulate signed evidence: positive weights support an
+association, negative weights oppose it. Signs survive inheritance, community
+aggregation, saving and seeding new agents. Conflicting evidence cancels rather
+than becoming stronger consensus. Negative links do not repel concept vectors
+and do not form positive semantic families. `SemanticStore::association` exposes
+the net weight; it is neither a calibrated correlation nor a logical “never”.
+Co-occurrence remains positive evidence; callers must supply explicit negative
+feedback (as dictionary antonym links already do). This does not interpret every
+sentence containing “not”, or turn a context-specific machine failure into a
+universal conceptual prohibition.
 
 Semantic dimensionality is tunable with `--dimensions N` (8–256, default 32).
 Try 64 first for larger experiments; higher dimensions cost proportionally more
@@ -128,50 +139,132 @@ and Rust use different random-number and floating-point implementations.
 
 ## Non-language capability learning
 
-Every run now includes a bounded experimental world with five visible state
-bits and five actions: take a key, unlock a door, activate power, extend a
-bridge, and retrieve an object. Agents start without action rules. They learn
-additive effects and prerequisite conjunctions from observed transitions,
-including failures. A supplied breadth-first planner combines those learned
-rules into action sequences. This learns how to use supplied actions; it does
-not invent new primitive actions or learn the planning algorithm itself.
+Every run starts with five actions: take a key, unlock a door, activate power,
+extend a bridge, and retrieve an object. Agents learn additive effects and
+prerequisites from successes, failures, and one sampled intervention per
+training episode. A supplied dependency planner combines learned rules into
+plans without enumerating all possible states. No semantic-map settings are
+changed: capability knowledge is separate from linguistic associations.
 
-Three sampled agents train per generation, with at most 12 actions per episode.
-The curriculum introduces key/door goals in generations 1–20, power/bridge in
-21–40, and combined retrieval from 41 onward. Successful episodes add a small,
-bounded fitness reward. Offspring inherit the selected parent's experience;
-capability knowledge is currently run-local, separate from public semantic
-memory. The experiment uses its own seeded RNG.
+Difficulty now advances automatically. Both the population-average individual
+score and pooled score must reach **90% on every milestone** for three
+consecutive evaluations, with at least 20 generations at the current level.
+Initial key/door training lasts to generation 20, bridge training to generation
+40, and full-goal training follows. Evaluations run every five generations.
 
-Open `capability_monitor.html` inside the printed run directory in a browser.
-It refreshes every five seconds and compares individual knowledge, pooled
-community evidence, and an untrained planner. The pooled result is an upper
-bound on sharing, not a learned communication policy. The untrained planner
-has no rules and abstains; it is not a random-action baseline.
+Each new level normally adds an independent preparation action and an assembly
+action requiring both that preparation and the previous goal (plus a sampled
+earlier prerequisite). This grows the number of skills and the length of plans.
+Prerequisites only point backwards, so generated problems remain solvable.
+Earlier action rules remain unchanged; this tests acquisition and composition
+of new skills, not adaptation to contradictory rules. Primitive actions and
+the planning algorithm are supplied, not invented by the agents.
 
-- `capability_metrics.csv`: fixed test success, steps, wasted actions, prediction
-  coverage and correct predictions, measured at generation 1 and every 5 thereafter.
-- `capability_agents.csv`: per-lineage knowledge and evaluation history, allowing
-  individual learning to be distinguished from population turnover/inheritance.
-- `capability_episodes.jsonl`: training attempts with before/after states and
-  predictions made before learning the outcome.
-- `run_summary.txt`: latest capability evaluation and monitor location.
+The default resource ceiling is **21 actions** (eight expansions after the
+initial world). Use `--capability-limit N` to select 5–31 actions. At an even
+limit, the final expansion can add just one assembly action. Once the ceiling
+is reached the monitor says so, and training continues without further
+expansion. This is bounded progressive complexity, not an infinite curriculum.
 
-Evaluation never teaches or rewards agents. Test episodes begin in four fixed
-alternative states; training always starts empty. Those test starts can occur
-as intermediate training states, so this measures recombination and transfer
-of learned rules, not wholly unseen worlds. All 160 state/action transitions
-are also checked for prediction accuracy; the dashboard counts unknown
-predictions as incorrect. Earlier goals remain in the evaluation after the
-curriculum advances to expose forgetting. Population curves combine learning,
-selection and inheritance; they are not isolated causal estimates of learning.
+Open the printed `capability_monitor.html` path in a browser. It refreshes every
+five seconds, marks level changes on the chart, and shows current-goal success,
+retention of earlier milestones, wasted actions, and prediction accuracy.
+Scores on different levels are not directly comparable: the goal is harder.
 
-For an isolated 100-generation experiment, use a dedicated mailbox directory:
+- `capability_levels.csv`: current and weakest-milestone success, mastery streak,
+  action count, time on level, and ceiling status. `before_training` rows record
+  the immediate performance drop when a level opens.
+- `capability_events.jsonl`: level introductions with environment prerequisites,
+  and mastery timestamps for measuring generations to mastery.
+- `capability_metrics.csv`: per-goal test success, steps, wasted actions and
+  prediction coverage/accuracy, identified by level and evaluation phase.
+- `capability_agents.csv`: per-lineage knowledge and current-goal scores.
+- `capability_retention.csv`: every agent/milestone score, action evidence count,
+  and whether the inferred rule is currently known. `capability_events.jsonl`
+  emits `retention_drop` records when retained skills fall below 90%.
+- `capability_episodes.jsonl`: bounded attempts and training interventions with
+  predictions recorded before the resulting observations are learned.
+- `run_summary.txt`: latest capability summary and monitor location.
+
+Each goal has 12 deterministic test cases, including empty and partial supply
+states. Earlier milestones retain the same test starts when levels change.
+Evaluation never teaches or rewards agents; its RNG does not affect training.
+Training interventions may overlap test states, so these are diagnostic tests
+of recombination, not a guarantee of completely unseen experience. Prediction
+checks use 32 fixed sampled states per current action (not exhaustive 2^N
+states). Unknown predictions count as incorrect on the monitor.
+
+Three sampled agents train per generation, at most three times the available
+action count per episode, plus one intervention. Successful episodes get a
+small bounded fitness reward. Per-agent memory retains at most 64 distinct
+transitions per action. Offspring inherit a selected parent's experience.
+Knowledge and difficulty progression remain **run-local**; restarting creates
+a new curriculum. Public semantic memory does not restore capability learning.
+
+Peer teaching is enabled by default. After individual practice, up to three
+learners request one peer-witnessed transition each. A supplied selection
+policy favours disputed outcomes or unknown actions; it scans at most eight
+recent examples per action per potential teacher. Self-teaching, already held
+examples, and examples the learner already predicts correctly are skipped.
+The learner replays the proposed action in the sandbox and adopts the observed
+example only if it matches the testimony. Peers exchange examples, not entire
+models or evaluator answers. A verified lesson can still hurt generalisation;
+those regressions are counted rather than rolled back using test results.
+
+The monitor's **Peer teaching** panel reports requests, verified examples,
+improvements/regressions, and the mean immediate change in milestone test
+success over the latest 100 verified lessons. Each exchange is compared with
+one random practice action on a copy of the exact same pre-lesson learner.
+Both alternatives cost one sandbox action. The random-practice copy is then
+discarded. These paired diagnostics do not select lessons, update fitness,
+choose curriculum gates, or enter agent memory. They measure local effects,
+not long-term causal benefit; individual and pooled evaluation after teaching
+still controls normal curriculum advancement.
+
+- `capability_teaching.csv`: sender/receiver lineages, action, verification,
+  before/after/random-practice milestone results and current-goal rates.
+- `capability_teaching.jsonl`: the actual examples, pre-lesson predictions,
+  replay results, comparison interventions, and unanswered requests.
+- `capability_teaching_totals.csv`: per-generation requests, verifications,
+  improvements and regressions (including zero-delivery generations).
+
+Use `--no-capability-teaching` for a run without exchanges. Teaching has its own
+seeded RNG. Enabled/disabled runs can still diverge through selection and
+curriculum timing, and disabled runs have fewer real practice actions; use the
+paired single-action diagnostic for a comparison with equal practice cost.
+
+Pooled evidence remains a bounded aggregate comparison; the blue individual
+curve now includes actual peer learning. The teaching policy itself is supplied,
+not evolved or learned.
+
+The run also writes `capability_scaffold.jsonl`. This semantic-neighbourhood
+layer connects prerequisite bits to actions using repeated community evidence.
+It only biases agents toward uncertain boundary experiments; it contains no
+ordered solution paths. Agents still verify every suggested connection in the
+world, and the scaffold is rebuilt from current agents each generation.
+The untrained planner has no rules and abstains, rather than acting randomly.
+Population scores combine learning, selection and inheritance; they do not
+mean that every individual is at 90% or isolate learning's causal contribution.
+
+For live use:
+
+```bash
+cargo run --release --manifest-path rust/Cargo.toml -- --watch --converse converse.txt --capability-limit 21
+```
+
+For an isolated experiment with enough time to see multiple levels:
 
 ```bash
 mkdir -p /tmp/mas-capability-demo
-cargo run --manifest-path rust/Cargo.toml -- --generations 100 --seed 12345 --fresh-community --converse /tmp/mas-capability-demo/converse.txt
+cargo run --release --manifest-path rust/Cargo.toml -- --generations 1000 --seed 12345 --fresh-community --converse /tmp/mas-capability-demo/converse.txt
 ```
 
-A 30-generation default run does not reach the final curriculum stage. Use at
-least 60 generations to observe combined retrieval, or `--watch` for live use.
+Existing processes must be restarted to use the new code. The new reports use
+level/current-goal columns rather than the earlier stage/retrieval-only schema;
+old run artifacts remain unchanged.
+
+
+The machine experiment now evaluates every agent and starts episodes at random
+non-terminal positions, so completion cannot be achieved by always starting at
+the beginning. `machine_links.html` reports the observed previous-action to
+next-choice distribution with raw counts.

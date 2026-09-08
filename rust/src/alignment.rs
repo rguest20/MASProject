@@ -218,12 +218,14 @@ impl CommunitySemanticMap {
                 continue;
             }
             let mean_strength = weights.iter().sum::<f32>() / weights.len() as f32;
-            if mean_strength < 0.05 {
+            if mean_strength.abs() < 0.05 {
+                // Conflicting current evidence must not preserve stale consensus.
+                self.relationships.remove(&(left, right));
                 continue;
             }
             let confidence = (0.65 * coverage
-                + 0.35 * (mean_strength / (mean_strength + 0.25)).clamp(0.0, 1.0))
-            .clamp(0.0, 1.0);
+                + 0.35 * (mean_strength.abs() / (mean_strength.abs() + 0.25)))
+                .clamp(0.0, 1.0);
             let alpha = 0.04 + 0.20 * confidence;
             self.relationships
                 .entry((left.clone(), right.clone()))
@@ -262,7 +264,8 @@ impl CommunitySemanticMap {
                 .then_with(|| {
                     right
                         .strength
-                        .partial_cmp(&left.strength)
+                        .abs()
+                        .partial_cmp(&left.strength.abs())
                         .unwrap_or(Ordering::Equal)
                 })
                 .then_with(|| left.left.cmp(&right.left))
@@ -439,7 +442,7 @@ impl CommunitySemanticMap {
                     .filter(|value| value.is_finite())
                     .unwrap_or(0.0) as f32
             };
-            let strength = finite("strength").clamp(0.0, 100.0);
+            let strength = finite("strength").clamp(-100.0, 100.0);
             let confidence = finite("confidence").clamp(0.0, 1.0);
             let coverage = finite("coverage").clamp(0.0, 1.0);
             let count = item
@@ -447,7 +450,7 @@ impl CommunitySemanticMap {
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
                 .min(1_000_000) as usize;
-            if strength < 0.05 || count == 0 {
+            if strength.abs() < 0.05 || count == 0 {
                 continue;
             }
             restored.insert(
@@ -510,14 +513,17 @@ impl CommunitySemanticMap {
                     .then_with(|| {
                         right
                             .strength
-                            .partial_cmp(&left.strength)
+                            .abs()
+                            .partial_cmp(&left.strength.abs())
                             .unwrap_or(Ordering::Equal)
                     })
             });
             for relationship in relationships.into_iter().take(512) {
-                let strength =
-                    (0.03 + 0.08 * relationship.confidence + 0.01 * relationship.strength.min(2.0))
-                        .min(0.15);
+                let strength = (0.03
+                    + 0.08 * relationship.confidence
+                    + 0.01 * relationship.strength.abs().min(2.0))
+                .min(0.15)
+                    * relationship.strength.signum();
                 agent
                     .semantics
                     .link(&relationship.left, &relationship.right, strength, rng);
@@ -556,6 +562,38 @@ fn cosine(left: &Array1<f32>, right: &Array1<f32>) -> f32 {
 mod tests {
     use super::CommunitySemanticMap;
     use crate::model::{Agent, Rng};
+
+    #[test]
+    fn negative_relationships_survive_community_round_trip_and_seeding() {
+        let mut rng = Rng::new(802);
+        let mut agents: Vec<_> = (0..4).map(|id| Agent::new(id, &mut rng)).collect();
+        for agent in &mut agents {
+            for _ in 0..8 {
+                agent.observe(&["hot".into(), "cold".into()], 0.01, &mut rng);
+            }
+            agent.semantics.link("cold", "hot", -2.0, &mut rng);
+        }
+        let mut map = CommunitySemanticMap::default();
+        // Align both concepts to ensure they meet the public centroid gate.
+        for word in ["hot", "cold"] {
+            let vector = agents[0].semantics.vector(word).unwrap().clone();
+            for agent in &mut agents {
+                agent.semantics.blend_from(word, &vector, 1.0, &mut rng);
+            }
+        }
+        map.update(&agents);
+        let key = ("cold".to_string(), "hot".to_string());
+        assert!(map.relationships[&key].strength < 0.0);
+        let mut restored = CommunitySemanticMap::default();
+        restored.restore_memory_value(&map.memory_value());
+        assert_eq!(
+            restored.restore_relationships_memory_value(&map.relationships_memory_value()),
+            1
+        );
+        let mut fresh = vec![Agent::new(10, &mut rng)];
+        restored.seed_agents(&mut fresh, &mut rng);
+        assert!(fresh[0].semantics.association("cold", "hot").unwrap() < 0.0);
+    }
 
     #[test]
     fn shared_high_usage_vector_enters_the_community_map() {

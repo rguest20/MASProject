@@ -11,6 +11,8 @@ pub struct RunOptions {
     pub converse_path: PathBuf,
     pub seed: Option<u64>,
     pub dimensions: Option<usize>,
+    pub capability_limit: usize,
+    pub capability_teaching: bool,
     pub community_memory_path: Option<PathBuf>,
     pub use_community_memory: bool,
 }
@@ -25,6 +27,8 @@ impl Default for RunOptions {
             converse_path: PathBuf::from("converse.txt"),
             seed: None,
             dimensions: None,
+            capability_limit: crate::capabilities::DEFAULT_ACTION_LIMIT,
+            capability_teaching: true,
             community_memory_path: None,
             use_community_memory: true,
         }

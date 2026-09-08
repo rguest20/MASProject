@@ -42,6 +42,7 @@ pub struct Coordinator {
     dictionary: HumanDictionary,
     tasks: TaskEngine,
     capability_lab: crate::capabilities::CapabilityLab,
+    machine_lab: crate::machine::MachineLab,
     community_semantics: CommunitySemanticMap,
     phase3: Phase3Runtime,
     rng: Rng,
@@ -109,6 +110,9 @@ struct SandboxMetrics {
 }
 
 impl Coordinator {
+    pub fn machine_won(&self) -> bool {
+        self.machine_lab.won
+    }
     pub fn new(options: RunOptions) -> io::Result<Self> {
         if let Some(dimensions) = options.dimensions {
             configure_semantic_dimensions(dimensions)
@@ -190,7 +194,9 @@ impl Coordinator {
             reading: ReadingBridge::load(&workspace_root),
             dictionary: HumanDictionary::discover(&workspace_root),
             tasks: TaskEngine::default(),
-            capability_lab: crate::capabilities::CapabilityLab::default(),
+            capability_lab: crate::capabilities::CapabilityLab::new(options.capability_limit)
+                .with_teaching(options.capability_teaching),
+            machine_lab: crate::machine::MachineLab::new(seed),
             community_semantics,
             phase3,
             rng,
@@ -218,12 +224,10 @@ impl Coordinator {
             .community_semantics
             .repair_tasks(&mut self.agents, &mut self.rng);
         self.recover_agents();
-        self.capability_lab.tick(
-            &mut self.agents,
-            self.generation,
-            self.seed,
-            &self.run_dir,
-        )?;
+        self.capability_lab
+            .tick(&mut self.agents, self.generation, self.seed, &self.run_dir)?;
+        self.machine_lab
+            .tick(&mut self.agents, self.generation, &self.run_dir)?;
         let evolution_metrics = evolve(
             &mut self.agents,
             &self.lexicon,

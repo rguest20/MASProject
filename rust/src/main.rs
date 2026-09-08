@@ -8,6 +8,7 @@ mod dictionary;
 mod evolution;
 mod language;
 mod lexicon;
+mod machine;
 mod model;
 mod numeric;
 mod phase3;
@@ -27,7 +28,7 @@ use simulation::Coordinator;
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -- [--generations N] [--watch] [--delay SECONDS] [--converse PATH] [--seed N] [--dimensions N] [--community-memory PATH] [--fresh-community]"
+        "Usage: cargo run -- [--generations N] [--watch] [--delay SECONDS] [--converse PATH] [--seed N] [--dimensions N] [--community-memory PATH] [--fresh-community] [--capability-limit N] [--no-capability-teaching]"
     );
 }
 
@@ -77,6 +78,18 @@ fn parse_options() -> Result<RunOptions, String> {
                     args.next().ok_or("--community-memory needs a path")?,
                 ));
             }
+            "--no-capability-teaching" => options.capability_teaching = false,
+            "--capability-limit" => {
+                let limit: usize = args
+                    .next()
+                    .ok_or("--capability-limit needs a value")?
+                    .parse()
+                    .map_err(|_| "--capability-limit must be an integer from 5 to 31")?;
+                if !(5..=capabilities::MAX_ACTION_LIMIT).contains(&limit) {
+                    return Err("--capability-limit must be between 5 and 31".into());
+                }
+                options.capability_limit = limit;
+            }
             "--fresh-community" => options.use_community_memory = false,
             "--help" | "-h" => {
                 print_usage();
@@ -107,7 +120,18 @@ fn main() {
     println!("Run directory: {}", coordinator.run_dir.display());
     println!(
         "Capability monitor: {}",
-        coordinator.run_dir.join("capability_monitor.html").display()
+        coordinator
+            .run_dir
+            .join("capability_monitor.html")
+            .display()
+    );
+    println!(
+        "Machine monitor: {}",
+        coordinator.run_dir.join("machine_monitor.html").display()
+    );
+    println!(
+        "Machine action links: {}",
+        coordinator.run_dir.join("machine_links.html").display()
     );
     println!("Seed: {}", coordinator.seed);
     println!("Conversation: {}", options.converse_path.display());
@@ -137,6 +161,10 @@ fn main() {
                 eprintln!("Generation failed: {error}");
                 break;
             }
+            if coordinator.machine_won() {
+                println!("Machine process mastered: 64 steps complete. Exiting.");
+                break;
+            }
             if options.delay_ms > 0 {
                 thread::sleep(Duration::from_millis(options.delay_ms));
             }
@@ -146,6 +174,10 @@ fn main() {
             if let Err(error) = coordinator.run_generation() {
                 eprintln!("Generation failed: {error}");
                 std::process::exit(1);
+            }
+            if coordinator.machine_won() {
+                println!("Machine process mastered: 64 steps complete. Exiting.");
+                break;
             }
         }
     }

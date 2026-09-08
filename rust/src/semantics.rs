@@ -39,6 +39,7 @@ pub fn configure_semantic_dimensions(dimensions: usize) -> Result<(), String> {
 
 #[derive(Clone, Debug)]
 pub struct SemanticLink {
+    /// Net association: positive support, negative opposition. Not a probability.
     pub weight: f32,
     usefulness: f32,
     last_seen: u64,
@@ -344,7 +345,7 @@ impl SemanticStore {
                         && !self.structural_tokens.contains(right)
                         && !identity_like(left)
                         && !identity_like(right)
-                        && link.weight >= 0.04)
+                        && link.weight.abs() >= 0.04)
                         .then_some((left.clone(), right.clone(), link.weight))
                 })
             })
@@ -444,8 +445,17 @@ impl SemanticStore {
         }
     }
 
+    /// Inspect a signed association independently of vector similarity.
+    pub fn association(&self, left: &str, right: &str) -> Option<f32> {
+        self.links.get(left)?.get(right).map(|link| link.weight)
+    }
+
+    /// Add signed evidence. A negative update weakens support and can eventually
+    /// reverse it; a single rejection is not a permanent logical prohibition.
     pub fn link(&mut self, left: &str, right: &str, weight: f32, rng: &mut Rng) {
-        if left.is_empty()
+        if !weight.is_finite()
+            || weight == 0.0
+            || left.is_empty()
             || right.is_empty()
             || left == right
             || self.numeric_tokens.contains(left)
@@ -877,7 +887,9 @@ impl SemanticStore {
             for (other, weight) in neighbours {
                 if let Some(other_vector) = self.vectors.get(&other) {
                     for (value, target) in vector.iter_mut().zip(other_vector.iter()) {
-                        *value += 0.01 * weight * (target - *value);
+                        // Opposition is a graph relationship, not evidence
+                        // that concepts belong far apart in semantic space.
+                        *value += 0.01 * weight.max(0.0) * (target - *value);
                     }
                 }
             }
@@ -1034,6 +1046,23 @@ mod tests {
     use crate::model::Rng;
     use ndarray::Array1;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn signed_associations_reverse_and_survive_inheritance() {
+        let mut rng = Rng::new(144);
+        let mut store = SemanticStore::new();
+        store.link("hot", "cold", 0.2, &mut rng);
+        store.link("hot", "cold", -0.8, &mut rng);
+        assert!(store.association("hot", "cold").unwrap() < 0.0);
+        assert_eq!(
+            store.association("hot", "cold"),
+            store.association("cold", "hot")
+        );
+        store.link("hot", "cold", f32::NAN, &mut rng);
+        let tokens = ["hot".into(), "cold".into()].into_iter().collect();
+        let child = SemanticStore::inherit_from([&store, &store, &store], &tokens, &mut rng);
+        assert!(child.association("hot", "cold").unwrap() < 0.0);
+    }
 
     #[test]
     fn observing_context_creates_vectors_and_bidirectional_links() {

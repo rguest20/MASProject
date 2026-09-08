@@ -12,6 +12,7 @@ use crate::semantics::SemanticStore;
 #[derive(Clone, Debug)]
 pub struct Agent {
     pub capabilities: crate::capabilities::CapabilityMemory,
+    pub machine: crate::machine::MachineMemory,
     pub id: usize,
     /// Stable biological/cultural identity. `id` is a reusable population
     /// slot; this value is never reused and is safe for lineage accounting.
@@ -56,6 +57,7 @@ impl Agent {
     pub fn new(id: usize, rng: &mut Rng) -> Self {
         Self {
             capabilities: crate::capabilities::CapabilityMemory::default(),
+            machine: crate::machine::MachineMemory::default(),
             id,
             lineage_id: id as u64,
             identity_token: format!("agent_{id}"),
