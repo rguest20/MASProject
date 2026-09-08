@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -41,11 +41,13 @@ pub struct Coordinator {
     reading: ReadingBridge,
     dictionary: HumanDictionary,
     tasks: TaskEngine,
+    capability_lab: crate::capabilities::CapabilityLab,
     community_semantics: CommunitySemanticMap,
     phase3: Phase3Runtime,
     rng: Rng,
     discomfort: f64,
     quiet_streak: usize,
+    unresolved_concepts: BTreeMap<String, UnresolvedConcept>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -54,6 +56,30 @@ struct ActionMetrics {
     succeeded: usize,
     social: usize,
     teaching: usize,
+    explorers: Vec<usize>,
+    curiosity_attempts: usize,
+    curiosity_links: usize,
+    curiosity_retries: usize,
+    curiosity_questions: usize,
+    curiosity_pending: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ExplorerCuriosity {
+    attempted: usize,
+    linked: usize,
+    retried: usize,
+    question: Option<String>,
+}
+
+/// A word can stay uncertain without being forgotten or prematurely treated
+/// as understood. These records are deliberately tiny and bounded by the
+/// reading frontier, not a second unbounded world model.
+#[derive(Clone, Debug, Default)]
+struct UnresolvedConcept {
+    attempts: usize,
+    last_attempt_generation: usize,
+    asked_ryan: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -130,11 +156,13 @@ impl Coordinator {
         fs::write(
             run_dir.join("metadata.json"),
             format!(
-                "{{\n  \"seed\": {seed},\n  \"implementation\": \"rust\",\n  \"population\": {POPULATION},\n  \"semantic_dimensions\": {},\n  \"community_memory\": {{\n    \"path\": {},\n    \"loaded\": {}\n  }}\n}}\n",
+                "{{\n  \"seed\": {seed},\n  \"implementation\": \"rust\",\n  \"population\": {POPULATION},\n  \"semantic_dimensions\": {},\n  \"community_memory\": {{\n    \"path\": {},\n    \"loaded\": {},\n    \"tokens\": {},\n    \"relationships\": {}\n  }}\n}}\n",
                 semantic_dimensions(),
                 serde_json::to_string(&community_memory_path.to_string_lossy())
                     .expect("memory path is JSON"),
                 community_memory_status.loaded,
+                community_memory_status.tokens,
+                community_memory_status.relationships,
             ),
         )?;
         let phase3 = Phase3Runtime::build(
@@ -162,11 +190,13 @@ impl Coordinator {
             reading: ReadingBridge::load(&workspace_root),
             dictionary: HumanDictionary::discover(&workspace_root),
             tasks: TaskEngine::default(),
+            capability_lab: crate::capabilities::CapabilityLab::default(),
             community_semantics,
             phase3,
             rng,
             discomfort: 0.0,
             quiet_streak: 0,
+            unresolved_concepts: BTreeMap::new(),
         })
     }
 
@@ -177,13 +207,23 @@ impl Coordinator {
         let task_metrics =
             self.tasks
                 .run_generation(&mut self.agents, &mut self.lexicon, &mut self.rng);
-        let action_metrics = self.run_agent_actions();
+        let mut action_metrics = self.run_agent_actions();
+        let curiosity = self.run_explorer_curiosity(&action_metrics);
+        action_metrics.curiosity_attempts = curiosity.attempted;
+        action_metrics.curiosity_links = curiosity.linked;
+        action_metrics.curiosity_retries = curiosity.retried;
         let sandbox_metrics = self.run_sandbox_steps();
         self.community_semantics.update(&self.agents);
         let alignment_metrics = self
             .community_semantics
             .repair_tasks(&mut self.agents, &mut self.rng);
         self.recover_agents();
+        self.capability_lab.tick(
+            &mut self.agents,
+            self.generation,
+            self.seed,
+            &self.run_dir,
+        )?;
         let evolution_metrics = evolve(
             &mut self.agents,
             &self.lexicon,
@@ -199,6 +239,23 @@ impl Coordinator {
             &mut self.agents,
             &mut self.rng,
         )?;
+        if let Some(topic) = self.conversation.take_resolved_question_topic() {
+            self.unresolved_concepts.remove(&topic);
+        }
+        if reply.is_none()
+            && let Some(topic) = curiosity.question.as_deref()
+            && self.conversation.ask_ryan_about(topic, self.generation)?
+        {
+            if let Some(record) = self.unresolved_concepts.get_mut(topic) {
+                record.asked_ryan = true;
+            }
+            action_metrics.curiosity_questions += 1;
+        }
+        action_metrics.curiosity_pending = self
+            .unresolved_concepts
+            .values()
+            .filter(|record| !record.asked_ryan)
+            .count();
         self.apply_dictionary_links();
         if reply.is_some() {
             self.quiet_streak = 0;
@@ -230,6 +287,10 @@ impl Coordinator {
         )?;
         self.persist_community_memory()?;
         Ok(())
+    }
+
+    pub fn question_path(&self) -> &Path {
+        self.conversation.question_path()
     }
 
     fn persist_community_memory(&self) -> io::Result<()> {
@@ -454,7 +515,12 @@ impl Coordinator {
                     self.agents[agent_index].observe(&[word], 0.06, &mut self.rng);
                     true
                 }
-                Action::Learn | Action::Explore | Action::Reorganise => {
+                Action::Explore => {
+                    metrics.explorers.push(agent_index);
+                    self.agents[agent_index].semantic_tick(&mut self.rng);
+                    true
+                }
+                Action::Learn | Action::Reorganise => {
                     self.agents[agent_index].semantic_tick(&mut self.rng);
                     true
                 }
@@ -469,6 +535,112 @@ impl Coordinator {
             }
         }
         metrics
+    }
+
+    /// An explorer distinguishes a verified bridge from mere shared exposure.
+    /// A word carried by the same story into every agent is not therefore
+    /// understood. Failed candidates remain in a small retry backlog and only
+    /// reach Ryan after at least two explorer attempts.
+    fn run_explorer_curiosity(&mut self, actions: &ActionMetrics) -> ExplorerCuriosity {
+        let Some(&explorer_index) = actions
+            .explorers
+            .get(self.rng.index(actions.explorers.len().max(1)))
+        else {
+            return ExplorerCuriosity::default();
+        };
+        let (topic, retrying) = if let Some(topic) = self.due_unresolved_topic() {
+            (topic, true)
+        } else {
+            let mut candidates = self.reading.exploration_candidates();
+            candidates.retain(|topic| !self.unresolved_concepts.contains_key(topic));
+            candidates
+                .sort_by_key(|topic| self.agents[explorer_index].semantics.link_count_for(topic));
+            // Keep exploration focused on the least-connected end of the
+            // shared reading frontier. Raw story exposure is not a bridge.
+            candidates.truncate((candidates.len() / 3).max(1));
+            let Some(topic) = candidates
+                .get(self.rng.index(candidates.len().max(1)))
+                .cloned()
+            else {
+                return ExplorerCuriosity::default();
+            };
+            (topic, false)
+        };
+        let mut result = ExplorerCuriosity {
+            attempted: 1,
+            retried: retrying as usize,
+            ..ExplorerCuriosity::default()
+        };
+
+        let known = &self.agents[explorer_index].vocabulary;
+        let dictionary_anchor = self
+            .dictionary
+            .meaning_evidence(&topic)
+            .into_iter()
+            .flat_map(|evidence| {
+                evidence
+                    .category_tokens
+                    .into_iter()
+                    .chain(evidence.definition_tokens)
+                    .chain(evidence.synonyms)
+            })
+            .find(|word| {
+                word != &topic
+                    && known.contains(word)
+                    && self
+                        .community_semantics
+                        .token(word)
+                        .is_some_and(|concept| concept.confidence >= 0.50)
+            });
+        if let Some(anchor) = dictionary_anchor {
+            self.agents[explorer_index].observe(
+                &[topic.clone(), anchor.clone()],
+                0.10,
+                &mut self.rng,
+            );
+            self.dictionary_links_from_exploration(&topic, &anchor);
+            self.agents[explorer_index].state_event("learning_success");
+            self.unresolved_concepts.remove(&topic);
+            result.linked = 1;
+        } else {
+            self.agents[explorer_index].state_event("learning_failure");
+            let record = self.unresolved_concepts.entry(topic.clone()).or_default();
+            record.attempts += 1;
+            record.last_attempt_generation = self.generation;
+            if record.attempts >= 2 && !record.asked_ryan {
+                result.question = Some(topic);
+            }
+        }
+        result
+    }
+
+    fn due_unresolved_topic(&self) -> Option<String> {
+        const RETRY_AFTER_GENERATIONS: usize = 6;
+        self.unresolved_concepts
+            .iter()
+            .filter(|(_, record)| !record.asked_ryan)
+            .filter(|(_, record)| {
+                self.generation
+                    .saturating_sub(record.last_attempt_generation)
+                    >= RETRY_AFTER_GENERATIONS
+            })
+            .max_by(|left, right| {
+                left.1.attempts.cmp(&right.1.attempts).then_with(|| {
+                    right
+                        .1
+                        .last_attempt_generation
+                        .cmp(&left.1.last_attempt_generation)
+                })
+            })
+            .map(|(topic, _)| topic.clone())
+    }
+
+    fn dictionary_links_from_exploration(&mut self, topic: &str, anchor: &str) {
+        // Reuse the existing community-wide semantic update path without
+        // turning a tentative explorer attachment into a world fact.
+        for agent in &mut self.agents {
+            agent.semantics.link(topic, anchor, 0.04, &mut self.rng);
+        }
     }
 
     fn recover_agents(&mut self) {
@@ -660,10 +832,67 @@ impl Coordinator {
             .map(|agent| agent.semantics.family_count())
             .sum::<usize>()
             / self.agents.len();
+        let structural_tokens: usize = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_profile_metrics().0)
+            .sum::<usize>()
+            / self.agents.len();
+        let structural_entropy: f32 = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_profile_metrics().1)
+            .sum::<f32>()
+            / self.agents.len() as f32;
+        let structural_coverage: f32 = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_profile_metrics().2)
+            .sum::<f32>()
+            / self.agents.len() as f32;
+        let structural_observations: u32 = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_profile_metrics().3)
+            .sum::<u32>()
+            / self.agents.len() as u32;
+        let structural_edges: usize = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_edge_metrics().0)
+            .sum::<usize>()
+            / self.agents.len();
+        let structural_edge_weight: f32 = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_edge_metrics().1)
+            .sum::<f32>()
+            / self.agents.len() as f32;
+        let structural_edge_evidence: u32 = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_edge_metrics().2)
+            .sum::<u32>()
+            / self.agents.len() as u32;
+        let structural_family_pairs: usize = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.structural_edge_metrics().3)
+            .sum::<usize>()
+            / self.agents.len();
         let (positive, negative) = self.conversation.feedback_counts();
         let (english_bigrams, promoted_bigrams, meaning_bigrams) =
             self.conversation.bigram_metrics();
+        let (numeric_literals, numeric_literal_observations) =
+            self.conversation.numeric_literal_metrics();
         let topic = self.conversation.topic().unwrap_or("-");
+        let pending_topic = self
+            .conversation
+            .pending_topic_switch()
+            .map(|(topic, confirmations)| format!("{topic} ({confirmations}/2)"))
+            .unwrap_or_else(|| "-".to_string());
+        let (path_points, path_predictions, path_resets) =
+            self.conversation.semantic_path_metrics();
         let mut csv = OpenOptions::new().append(true).open(&self.metrics_path)?;
         writeln!(
             csv,
@@ -702,12 +931,21 @@ impl Coordinator {
         )?;
         writeln!(
             report,
-            "Conversation: topic={topic}; reply={}",
+            "Conversation: task={}; topic={topic}; pending topic={pending_topic}; reply={}",
+            self.conversation.dialogue_task(),
             reply.unwrap_or("idle")
         )?;
         writeln!(
             report,
+            "Semantic path: waypoints={path_points}; predicted next concepts={path_predictions}; resets={path_resets}",
+        )?;
+        writeln!(
+            report,
             "Conversation phrases: observed bigrams={english_bigrams}; promoted={promoted_bigrams}; meaning scaffolds={meaning_bigrams}",
+        )?;
+        writeln!(
+            report,
+            "Numeric literals: distinct={numeric_literals}; observations={numeric_literal_observations}; storage is bounded and separate from word semantics",
         )?;
         writeln!(
             report,
@@ -719,6 +957,10 @@ impl Coordinator {
         writeln!(
             report,
             "Semantic links (mean): {semantic_links}; families (mean): {semantic_families}"
+        )?;
+        writeln!(
+            report,
+            "Structural grammar (mean): operators={structural_tokens}; entropy={structural_entropy:.2}; family coverage={structural_coverage:.2}; observations={structural_observations}; directed family edges={structural_edges}; family pairs={structural_family_pairs}; edge evidence={structural_edge_evidence}; edge weight={structural_edge_weight:.2}"
         )?;
         writeln!(
             report,
@@ -776,8 +1018,17 @@ impl Coordinator {
         )?;
         writeln!(
             report,
-            "Agent actions: attempted={}; succeeded={}; social={}; teaching={}",
-            actions.attempted, actions.succeeded, actions.social, actions.teaching,
+            "Agent actions: attempted={}; succeeded={}; social={}; teaching={}; explorers={}; curiosity attempts={}; retries={}; verified links={}; unresolved backlog={}; Ryan questions={}",
+            actions.attempted,
+            actions.succeeded,
+            actions.social,
+            actions.teaching,
+            actions.explorers.len(),
+            actions.curiosity_attempts,
+            actions.curiosity_retries,
+            actions.curiosity_links,
+            actions.curiosity_pending,
+            actions.curiosity_questions,
         )?;
         writeln!(
             report,
@@ -814,8 +1065,9 @@ impl Coordinator {
         )?;
         writeln!(
             report,
-            "Semantic alignment: community tokens={}; proposed={}; repaired={}; mean repair distance={:.3}",
+            "Semantic alignment: community tokens={}; public relationships={}; proposed={}; repaired={}; mean repair distance={:.3}",
             alignment.community_tokens,
+            alignment.community_relationships,
             alignment.proposed,
             alignment.repaired,
             alignment.mean_distance,
@@ -850,6 +1102,11 @@ impl Coordinator {
         writeln!(summary, "Seed: {}", self.seed)?;
         writeln!(summary, "Completed generation: {}", self.generation)?;
         writeln!(summary, "Population: {}", self.agents.len())?;
+        writeln!(summary, "{}", self.capability_lab.summary)?;
+        writeln!(
+            summary,
+            "Capability monitor: capability_monitor.html; history: capability_metrics.csv"
+        )?;
         writeln!(
             summary,
             "Fitness: mean={:.3}; best={:.3}; trait diversity={:.4}; program diversity={:.3}",

@@ -1,8 +1,8 @@
 //! Durable public memory between otherwise fresh simulation runs.
 //!
-//! It intentionally holds only community semantic centroids and successful
-//! conventions. Agent-private vectors, relationships, fitness, and identities
-//! are never serialised here.
+//! It holds public semantic centroids, confidence-gated conceptual
+//! relationships, and successful conventions. Agent-private vectors, links,
+//! fitness, and identities are never serialised here.
 
 use std::fs;
 use std::io;
@@ -21,6 +21,7 @@ const SCHEMA_VERSION: u64 = 1;
 pub struct MemoryStatus {
     pub loaded: bool,
     pub tokens: usize,
+    pub relationships: usize,
     pub seeded_tokens: usize,
 }
 
@@ -45,10 +46,14 @@ pub fn restore(
     }
     lexicon.restore_memory_value(value.get("lexicon").unwrap_or(&Value::Null));
     let tokens = semantics.restore_memory_value(value.get("semantic").unwrap_or(&Value::Null));
+    let relationships = semantics.restore_relationships_memory_value(
+        value.get("semantic_relationships").unwrap_or(&Value::Null),
+    );
     let seeded_tokens = semantics.seed_agents(agents, rng);
     MemoryStatus {
         loaded: true,
         tokens,
+        relationships,
         seeded_tokens,
     }
 }
@@ -65,6 +70,7 @@ pub fn save(
         "dimensions": semantic_dimensions(),
         "generation": generation,
         "semantic": semantics.memory_value(),
+        "semantic_relationships": semantics.relationships_memory_value(),
         "lexicon": lexicon.memory_value(),
     });
     if let Some(parent) = path.parent() {
@@ -114,6 +120,7 @@ mod tests {
         }
         let mut old_map = CommunitySemanticMap::default();
         old_map.update(&old_agents);
+        assert!(old_map.relationship_count() > 0);
         let mut old_lexicon = CommunityLexicon::default();
         old_lexicon.observe_numeric_success(4, "bel");
         old_lexicon.observe_numeric_success(4, "bel");
@@ -133,12 +140,18 @@ mod tests {
         );
         assert!(status.loaded);
         assert!(status.tokens > 0);
+        assert!(status.relationships > 0);
         assert!(status.seeded_tokens > 0);
         assert_eq!(new_lexicon.numeric_token(4), Some("bel"));
         assert!(
             new_agents
                 .iter()
                 .all(|agent| agent.vocabulary.contains("apple"))
+        );
+        assert!(
+            new_agents
+                .iter()
+                .all(|agent| agent.semantics.link_count() > 0)
         );
         let _ = std::fs::remove_file(path);
     }

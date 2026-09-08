@@ -1,4 +1,5 @@
 mod alignment;
+mod capabilities;
 mod cognition;
 mod community_memory;
 mod config;
@@ -104,8 +105,16 @@ fn main() {
         }
     };
     println!("Run directory: {}", coordinator.run_dir.display());
+    println!(
+        "Capability monitor: {}",
+        coordinator.run_dir.join("capability_monitor.html").display()
+    );
     println!("Seed: {}", coordinator.seed);
     println!("Conversation: {}", options.converse_path.display());
+    println!(
+        "Explorer questions: {}",
+        coordinator.question_path().display()
+    );
     println!("Semantic dimensions: {}", semantic_dimensions());
     if options.use_community_memory {
         println!(
@@ -120,7 +129,9 @@ fn main() {
     }
 
     if options.watch {
-        println!("Watch mode is running. Edit converse.txt, then stop with Ctrl-C.");
+        println!(
+            "Watch mode is running. Edit converse.txt or answer question.txt, then stop with Ctrl-C."
+        );
         loop {
             if let Err(error) = coordinator.run_generation() {
                 eprintln!("Generation failed: {error}");

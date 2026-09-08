@@ -32,9 +32,35 @@ experimentation loop:
   address forms, and pragmatic practice/teaching/request/repair/assertion
   dialogue acts, including grounded request→answer and failed-turn repair
   exchanges; public conventions remain the only grounded shared channel;
-- `converse.txt` polling, controlled number/referent queries, simple
-  subject-centred assertions and retrieval, feedback-sensitive replies,
-  topic-safe working memory, and opaque learned interaction modes;
+- `converse.txt` polling with an executive turn router: arithmetic, numeric,
+  referent, definition, and teaching turns use their dedicated capabilities
+  before free conversation; concise retrieved/learned facts stop rather than
+  trailing into an old topic;
+- topic-safe working memory with parked frames. `New conversation` (including
+  the common `New conversaion` typo), `start over`, `clear context`, or
+  `change topic to games` clears only short-term conversational attractors;
+  `stop` is a silent control act.
+  These controls preserve world facts and the agents' long-term semantic maps;
+- a bounded community semantic path: recent content topics become waypoints,
+  each agent votes from its own vector geometry on nearby/directionally
+  compatible next concepts. Predictions require at least two coherent
+  waypoints and broad population agreement, then act only as weak free-chat
+  continuations. An unlikely human-selected topic starts a new path;
+- a human phrase needs repeated or positively reinforced evidence before it
+  becomes productive reply syntax; negative feedback rejects its reply pairs
+  and parks the current conversational frame;
+- feedback-sensitive replies and opaque learned interaction modes;
+- typed decimal literals in human text: values such as `1`, `2`, and `123`
+  are bounded numeric records with decimal-digit structure, not ordinary word
+  embeddings; once public digits and a base are agreed, larger values are
+  rendered compositionally in the community's own numeral system;
+- a learned structural-grammar layer: tokens repeatedly distributed across
+  varied semantic families can become operators, are removed from ordinary
+  vector/family attraction, and accumulate directed family-to-family edges;
+- explorer curiosity: the least-connected, repeatedly-read story vocabulary
+  is first linked through verified dictionary/community evidence, then (only if that
+  fails twice) retained in a bounded unresolved-concept backlog and placed in
+  the separate one-slot `question.txt` mailbox for Ryan;
 - lazy, bounded use of `python/filtered.json`: dictionary material becomes
   low-confidence agent semantic links, never automatic world facts or reply
   templates;
@@ -59,12 +85,28 @@ cargo run --manifest-path rust/Cargo.toml -- --generations 30 --seed 12345
 cargo run --manifest-path rust/Cargo.toml -- --watch --converse converse.txt
 ```
 
-The Rust runner persists its public community centroids and evidence-backed
-lexicon to `community_memory/rust-d32.json` after each completed generation. A
-separate memory file is selected for each semantic dimensionality. New
-runs have fresh agents but seed confident public concepts as a gentle prior.
-Use `--community-memory PATH` to select a file or `--fresh-community` for an
-isolated run that neither loads nor writes community memory.
+`question.txt` lives alongside the chosen `converse.txt`. When an explorer
+cannot attach a well-read word to anything it already knows, it may write:
+
+```text
+Community: What is willow?
+Ryan:
+```
+
+Write your teaching response after `Ryan:` and save. The answer is absorbed as
+semantic evidence after a short settling window; it does not generate a canned
+chat reply. The mailbox accepts no further community question until that answer
+has been processed.
+
+The Rust runner persists public community centroids, confidence-gated
+conceptual relationships, and the evidence-backed lexicon to
+`community_memory/rust-d32.json` after each completed generation. A public
+relationship is an undirected, mature positive association supported across
+agents; memory is bounded to 2,048 relationships and 12 per concept. New
+runs have fresh agents but seed confident public concepts and weak versions of
+their strongest relationships as a gentle prior. Use `--community-memory PATH`
+to select a file or `--fresh-community` for an isolated run that neither loads
+nor writes community memory.
 
 Semantic dimensionality is tunable with `--dimensions N` (8–256, default 32).
 Try 64 first for larger experiments; higher dimensions cost proportionally more
@@ -83,3 +125,53 @@ reference while the following subsystems are still being ported:
 The practical parity criterion is shared seeded behavioural contracts and
 matching aggregate outcomes, rather than byte-identical trajectories: Python
 and Rust use different random-number and floating-point implementations.
+
+## Non-language capability learning
+
+Every run now includes a bounded experimental world with five visible state
+bits and five actions: take a key, unlock a door, activate power, extend a
+bridge, and retrieve an object. Agents start without action rules. They learn
+additive effects and prerequisite conjunctions from observed transitions,
+including failures. A supplied breadth-first planner combines those learned
+rules into action sequences. This learns how to use supplied actions; it does
+not invent new primitive actions or learn the planning algorithm itself.
+
+Three sampled agents train per generation, with at most 12 actions per episode.
+The curriculum introduces key/door goals in generations 1–20, power/bridge in
+21–40, and combined retrieval from 41 onward. Successful episodes add a small,
+bounded fitness reward. Offspring inherit the selected parent's experience;
+capability knowledge is currently run-local, separate from public semantic
+memory. The experiment uses its own seeded RNG.
+
+Open `capability_monitor.html` inside the printed run directory in a browser.
+It refreshes every five seconds and compares individual knowledge, pooled
+community evidence, and an untrained planner. The pooled result is an upper
+bound on sharing, not a learned communication policy. The untrained planner
+has no rules and abstains; it is not a random-action baseline.
+
+- `capability_metrics.csv`: fixed test success, steps, wasted actions, prediction
+  coverage and correct predictions, measured at generation 1 and every 5 thereafter.
+- `capability_agents.csv`: per-lineage knowledge and evaluation history, allowing
+  individual learning to be distinguished from population turnover/inheritance.
+- `capability_episodes.jsonl`: training attempts with before/after states and
+  predictions made before learning the outcome.
+- `run_summary.txt`: latest capability evaluation and monitor location.
+
+Evaluation never teaches or rewards agents. Test episodes begin in four fixed
+alternative states; training always starts empty. Those test starts can occur
+as intermediate training states, so this measures recombination and transfer
+of learned rules, not wholly unseen worlds. All 160 state/action transitions
+are also checked for prediction accuracy; the dashboard counts unknown
+predictions as incorrect. Earlier goals remain in the evaluation after the
+curriculum advances to expose forgetting. Population curves combine learning,
+selection and inheritance; they are not isolated causal estimates of learning.
+
+For an isolated 100-generation experiment, use a dedicated mailbox directory:
+
+```bash
+mkdir -p /tmp/mas-capability-demo
+cargo run --manifest-path rust/Cargo.toml -- --generations 100 --seed 12345 --fresh-community --converse /tmp/mas-capability-demo/converse.txt
+```
+
+A 30-generation default run does not reach the final curriculum stage. Use at
+least 60 generations to observe combined retrieval, or `--watch` for live use.

@@ -19,26 +19,50 @@ pub struct CommunityToken {
     age: u32,
 }
 
+/// A confidence-gated public association. It is deliberately undirected:
+/// relation direction and grammar remain agent-level discoveries, while this
+/// compact layer preserves durable conceptual neighbourhoods across runs.
+#[derive(Clone, Debug)]
+pub struct CommunityRelationship {
+    pub left: String,
+    pub right: String,
+    pub strength: f32,
+    pub coverage: f32,
+    pub confidence: f32,
+    pub count: usize,
+    age: u32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CommunitySemanticMap {
     tokens: BTreeMap<String, CommunityToken>,
+    relationships: BTreeMap<(String, String), CommunityRelationship>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct AlignmentMetrics {
     pub community_tokens: usize,
+    pub community_relationships: usize,
     pub proposed: usize,
     pub repaired: usize,
     pub mean_distance: f32,
 }
 
 impl CommunitySemanticMap {
+    const MAX_TOKENS: usize = 512;
+    const MAX_RELATIONSHIPS: usize = 2_048;
+    const MAX_RELATIONSHIPS_PER_TOKEN: usize = 12;
+
     pub fn len(&self) -> usize {
         self.tokens.len()
     }
 
     pub fn token(&self, token: &str) -> Option<&CommunityToken> {
         self.tokens.get(token)
+    }
+
+    pub fn relationship_count(&self) -> usize {
+        self.relationships.len()
     }
 
     pub fn update(&mut self, agents: &[Agent]) {
@@ -92,7 +116,7 @@ impl CommunitySemanticMap {
         }
         self.tokens
             .retain(|_, item| item.age < 10 || item.confidence >= 0.25);
-        if self.tokens.len() > 512 {
+        if self.tokens.len() > Self::MAX_TOKENS {
             let mut ranked: Vec<_> = self
                 .tokens
                 .iter()
@@ -104,15 +128,20 @@ impl CommunitySemanticMap {
                     .unwrap_or(Ordering::Equal)
                     .then_with(|| right.2.cmp(&left.2))
             });
-            for (token, _, _) in ranked.into_iter().take(self.tokens.len() - 512) {
+            for (token, _, _) in ranked
+                .into_iter()
+                .take(self.tokens.len() - Self::MAX_TOKENS)
+            {
                 self.tokens.remove(&token);
             }
         }
+        self.update_relationships(agents);
     }
 
     pub fn repair_tasks(&self, agents: &mut [Agent], rng: &mut Rng) -> AlignmentMetrics {
         let mut metrics = AlignmentMetrics {
             community_tokens: self.len(),
+            community_relationships: self.relationship_count(),
             ..AlignmentMetrics::default()
         };
         let mut candidates = Vec::new();
@@ -169,8 +198,100 @@ impl CommunitySemanticMap {
         metrics
     }
 
-    /// JSON-safe, bounded public centroids. Private agent maps and links are
-    /// intentionally excluded: a later run starts with new individuals.
+    fn update_relationships(&mut self, agents: &[Agent]) {
+        for relationship in self.relationships.values_mut() {
+            relationship.age += 1;
+        }
+        let population = agents.len().max(1);
+        let mut collected = BTreeMap::<(String, String), Vec<f32>>::new();
+        for agent in agents {
+            for (left, right, weight) in agent.semantics.community_link_candidates() {
+                let key = (left, right);
+                if self.tokens.contains_key(&key.0) && self.tokens.contains_key(&key.1) {
+                    collected.entry(key).or_default().push(weight);
+                }
+            }
+        }
+        for ((left, right), weights) in collected {
+            let coverage = weights.len() as f32 / population as f32;
+            if coverage < 0.25 {
+                continue;
+            }
+            let mean_strength = weights.iter().sum::<f32>() / weights.len() as f32;
+            if mean_strength < 0.05 {
+                continue;
+            }
+            let confidence = (0.65 * coverage
+                + 0.35 * (mean_strength / (mean_strength + 0.25)).clamp(0.0, 1.0))
+            .clamp(0.0, 1.0);
+            let alpha = 0.04 + 0.20 * confidence;
+            self.relationships
+                .entry((left.clone(), right.clone()))
+                .and_modify(|current| {
+                    current.strength = (1.0 - alpha) * current.strength + alpha * mean_strength;
+                    current.coverage = coverage;
+                    current.confidence = confidence;
+                    current.count = weights.len();
+                    current.age = 0;
+                })
+                .or_insert(CommunityRelationship {
+                    left,
+                    right,
+                    strength: mean_strength,
+                    coverage,
+                    confidence,
+                    count: weights.len(),
+                    age: 0,
+                });
+        }
+        self.relationships.retain(|(left, right), relationship| {
+            self.tokens.contains_key(left)
+                && self.tokens.contains_key(right)
+                && (relationship.age < 10 || relationship.confidence >= 0.35)
+        });
+        self.bound_relationships();
+    }
+
+    fn bound_relationships(&mut self) {
+        let mut ranked: Vec<_> = self.relationships.values().cloned().collect();
+        ranked.sort_by(|left, right| {
+            right
+                .confidence
+                .partial_cmp(&left.confidence)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| {
+                    right
+                        .strength
+                        .partial_cmp(&left.strength)
+                        .unwrap_or(Ordering::Equal)
+                })
+                .then_with(|| left.left.cmp(&right.left))
+                .then_with(|| left.right.cmp(&right.right))
+        });
+        let mut bounded = BTreeMap::new();
+        let mut degrees = BTreeMap::<String, usize>::new();
+        for relationship in ranked {
+            if bounded.len() >= Self::MAX_RELATIONSHIPS
+                || degrees.get(&relationship.left).copied().unwrap_or(0)
+                    >= Self::MAX_RELATIONSHIPS_PER_TOKEN
+                || degrees.get(&relationship.right).copied().unwrap_or(0)
+                    >= Self::MAX_RELATIONSHIPS_PER_TOKEN
+            {
+                continue;
+            }
+            *degrees.entry(relationship.left.clone()).or_default() += 1;
+            *degrees.entry(relationship.right.clone()).or_default() += 1;
+            bounded.insert(
+                (relationship.left.clone(), relationship.right.clone()),
+                relationship,
+            );
+        }
+        self.relationships = bounded;
+    }
+
+    /// JSON-safe, bounded public centroids. Relationships are serialised by
+    /// `relationships_memory_value` so old centroid-only memory remains
+    /// readable.
     pub fn memory_value(&self) -> Value {
         let tokens = self
             .tokens
@@ -189,6 +310,24 @@ impl CommunitySemanticMap {
             })
             .collect::<serde_json::Map<_, _>>();
         Value::Object(tokens)
+    }
+
+    pub fn relationships_memory_value(&self) -> Value {
+        Value::Array(
+            self.relationships
+                .values()
+                .map(|relationship| {
+                    json!({
+                        "left": relationship.left,
+                        "right": relationship.right,
+                        "strength": relationship.strength,
+                        "coverage": relationship.coverage,
+                        "confidence": relationship.confidence,
+                        "count": relationship.count,
+                    })
+                })
+                .collect(),
+        )
     }
 
     pub fn restore_memory_value(&mut self, value: &Value) -> usize {
@@ -245,7 +384,7 @@ impl CommunitySemanticMap {
                 },
             );
         }
-        if restored.len() > 512 {
+        if restored.len() > Self::MAX_TOKENS {
             let mut ranked: Vec<_> = restored
                 .iter()
                 .map(|(token, item)| (token.clone(), item.confidence, item.count))
@@ -257,13 +396,76 @@ impl CommunitySemanticMap {
                     .unwrap_or(Ordering::Equal)
                     .then_with(|| right.2.cmp(&left.2))
             });
-            ranked = ranked.into_iter().take(512).collect();
+            ranked = ranked.into_iter().take(Self::MAX_TOKENS).collect();
             let allowed: std::collections::BTreeSet<_> =
                 ranked.into_iter().map(|(token, _, _)| token).collect();
             restored.retain(|token, _| allowed.contains(token));
         }
         self.tokens = restored;
         self.tokens.len()
+    }
+
+    pub fn restore_relationships_memory_value(&mut self, value: &Value) -> usize {
+        let Some(items) = value.as_array() else {
+            self.relationships.clear();
+            return 0;
+        };
+        let mut restored = BTreeMap::new();
+        for item in items {
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            let Some(left) = item.get("left").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(right) = item.get("right").and_then(Value::as_str) else {
+                continue;
+            };
+            let (left, right) = (
+                left.trim().to_ascii_lowercase(),
+                right.trim().to_ascii_lowercase(),
+            );
+            if left.is_empty()
+                || right.is_empty()
+                || left >= right
+                || !self.tokens.contains_key(&left)
+                || !self.tokens.contains_key(&right)
+            {
+                continue;
+            }
+            let finite = |name: &str| {
+                item.get(name)
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite())
+                    .unwrap_or(0.0) as f32
+            };
+            let strength = finite("strength").clamp(0.0, 100.0);
+            let confidence = finite("confidence").clamp(0.0, 1.0);
+            let coverage = finite("coverage").clamp(0.0, 1.0);
+            let count = item
+                .get("count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .min(1_000_000) as usize;
+            if strength < 0.05 || count == 0 {
+                continue;
+            }
+            restored.insert(
+                (left.clone(), right.clone()),
+                CommunityRelationship {
+                    left,
+                    right,
+                    strength,
+                    coverage,
+                    confidence,
+                    count,
+                    age: 0,
+                },
+            );
+        }
+        self.relationships = restored;
+        self.bound_relationships();
+        self.relationships.len()
     }
 
     /// Seed only confident public concepts into an otherwise fresh population.
@@ -288,6 +490,37 @@ impl CommunitySemanticMap {
                     .semantics
                     .blend_from(token, &item.vector, strength, rng);
                 agent.vocabulary.insert((*token).clone());
+            }
+            let seeded_tokens: std::collections::BTreeSet<_> =
+                seeds.iter().map(|(token, _)| (*token).clone()).collect();
+            let mut relationships: Vec<_> = self
+                .relationships
+                .values()
+                .filter(|relationship| {
+                    relationship.confidence >= 0.45
+                        && seeded_tokens.contains(&relationship.left)
+                        && seeded_tokens.contains(&relationship.right)
+                })
+                .collect();
+            relationships.sort_by(|left, right| {
+                right
+                    .confidence
+                    .partial_cmp(&left.confidence)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| {
+                        right
+                            .strength
+                            .partial_cmp(&left.strength)
+                            .unwrap_or(Ordering::Equal)
+                    })
+            });
+            for relationship in relationships.into_iter().take(512) {
+                let strength =
+                    (0.03 + 0.08 * relationship.confidence + 0.01 * relationship.strength.min(2.0))
+                        .min(0.15);
+                agent
+                    .semantics
+                    .link(&relationship.left, &relationship.right, strength, rng);
             }
         }
         seeds.len()

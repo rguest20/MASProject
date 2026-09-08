@@ -11,6 +11,7 @@ use crate::semantics::SemanticStore;
 
 #[derive(Clone, Debug)]
 pub struct Agent {
+    pub capabilities: crate::capabilities::CapabilityMemory,
     pub id: usize,
     /// Stable biological/cultural identity. `id` is a reusable population
     /// slot; this value is never reused and is safe for lineage accounting.
@@ -20,6 +21,9 @@ pub struct Agent {
     pub vocabulary: BTreeSet<String>,
     pub semantics: SemanticStore,
     pub numeric: NumericSystem,
+    /// Human-written decimal values are a typed, bounded recognition store.
+    /// They never enter ordinary vocabulary or semantic co-occurrence.
+    pub recognised_literals: BTreeMap<u32, u32>,
     pub referent_lexicon: BTreeMap<String, String>,
     pub action_lexicon: BTreeMap<String, String>,
     pub fitness: f64,
@@ -51,6 +55,7 @@ pub struct Agent {
 impl Agent {
     pub fn new(id: usize, rng: &mut Rng) -> Self {
         Self {
+            capabilities: crate::capabilities::CapabilityMemory::default(),
             id,
             lineage_id: id as u64,
             identity_token: format!("agent_{id}"),
@@ -58,6 +63,7 @@ impl Agent {
             vocabulary: BTreeSet::new(),
             semantics: SemanticStore::new(),
             numeric: NumericSystem::new(rng),
+            recognised_literals: BTreeMap::new(),
             referent_lexicon: private_signal_map("r", 6, rng),
             action_lexicon: private_signal_map("a", 4, rng),
             fitness: 0.0,
@@ -119,6 +125,21 @@ impl Agent {
 
     pub fn semantic_tick(&mut self, rng: &mut Rng) {
         self.semantics.tick(rng);
+    }
+
+    pub fn observe_numeric_literal(&mut self, value: u32) {
+        const MAX_RECOGNISED_LITERALS: usize = 256;
+        if !self.recognised_literals.contains_key(&value)
+            && self.recognised_literals.len() >= MAX_RECOGNISED_LITERALS
+            && let Some(evicted) = self
+                .recognised_literals
+                .iter()
+                .min_by_key(|(literal, observations)| (**observations, **literal))
+                .map(|(literal, _)| *literal)
+        {
+            self.recognised_literals.remove(&evicted);
+        }
+        *self.recognised_literals.entry(value).or_default() += 1;
     }
 
     pub fn ensure_numeric_semantics(&mut self, rng: &mut Rng) {

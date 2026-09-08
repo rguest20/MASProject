@@ -124,6 +124,19 @@ impl CommunityLexicon {
         self.numeric_promoted.get(&digit).map(String::as_str)
     }
 
+    /// Render a whole value compositionally from the public digit conventions.
+    /// This intentionally creates no convention for the raw decimal string:
+    /// `123` is understood through the already-agreed digit tokens.
+    pub fn numeric_phrase(&self, value: u32) -> Option<String> {
+        let base = self.community_base()?;
+        let digits = digits(value, base);
+        digits
+            .into_iter()
+            .map(|digit| self.numeric_token(digit).map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+            .map(|tokens| tokens.join(" "))
+    }
+
     pub fn referential_signal(&self, referent: &str) -> Option<&str> {
         self.referential_promoted
             .get(&referent.to_ascii_lowercase())
@@ -421,6 +434,20 @@ fn clean_token(value: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+fn digits(value: u32, base: u32) -> Vec<u32> {
+    if value == 0 {
+        return vec![0];
+    }
+    let mut remaining = value;
+    let mut digits = Vec::new();
+    while remaining > 0 {
+        digits.push(remaining % base);
+        remaining /= base;
+    }
+    digits.reverse();
+    digits
+}
+
 fn confidence<T: Ord>(evidence: Option<&BTreeMap<T, u32>>) -> f64 {
     let Some(evidence) = evidence else {
         return 0.0;
@@ -529,5 +556,17 @@ mod tests {
             lexicon.grammar_order("referent_action_number"),
             Some(order.as_slice())
         );
+    }
+
+    #[test]
+    fn public_digits_render_a_larger_number_compositionally() {
+        let mut lexicon = CommunityLexicon::default();
+        for (digit, token) in [(0, "na"), (1, "bel"), (2, "muk"), (3, "tor")] {
+            lexicon.observe_numeric_success(digit, token);
+            lexicon.observe_numeric_success(digit, token);
+        }
+        lexicon.observe_base_success(4);
+        lexicon.observe_base_success(4);
+        assert_eq!(lexicon.numeric_phrase(27), Some("bel muk tor".to_string()));
     }
 }

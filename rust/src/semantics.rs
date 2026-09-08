@@ -19,6 +19,9 @@ pub const MAX_SEMANTIC_DIMS: usize = 256;
 static SEMANTIC_DIMS: AtomicUsize = AtomicUsize::new(DEFAULT_SEMANTIC_DIMS);
 const MAX_DEGREE: usize = 15;
 const MAX_CONTEXT_TOKENS: usize = 15;
+const MIN_STRUCTURAL_OBSERVATIONS: u32 = 12;
+const MIN_STRUCTURAL_FAMILIES: usize = 3;
+const MIN_STRUCTURAL_ENTROPY: f32 = 0.80;
 
 pub fn semantic_dimensions() -> usize {
     SEMANTIC_DIMS.load(AtomicOrdering::Relaxed)
@@ -51,6 +54,12 @@ pub struct SemanticStore {
     tick: u64,
     families: Vec<SemanticFamily>,
     next_family_id: usize,
+    /// Family-context evidence used to distinguish widely distributed
+    /// connective tokens from content that belongs to a compact region.
+    family_distribution: BTreeMap<String, BTreeMap<String, u32>>,
+    structural_tokens: BTreeSet<String>,
+    structural_profiles: BTreeMap<String, StructuralProfile>,
+    structural_edges: BTreeMap<(String, String, String), StructuralEdge>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +69,25 @@ pub struct SemanticFamily {
     pub members: BTreeSet<String>,
     pub confidence: f32,
     strength: f32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct StructuralProfile {
+    observations: u32,
+    entropy: f32,
+    coverage: f32,
+}
+
+/// A learned grammatical operation between two *semantic families*. The
+/// operator itself is not a point in either family and therefore cannot pull
+/// their content vectors together through ordinary co-occurrence.
+#[derive(Clone, Debug)]
+pub struct StructuralEdge {
+    pub source_family_id: String,
+    pub operator: String,
+    pub target_family_id: String,
+    pub grammatical_weight: f32,
+    pub evidence: u32,
 }
 
 impl Default for SemanticStore {
@@ -79,6 +107,10 @@ impl SemanticStore {
             tick: 0,
             families: Vec::new(),
             next_family_id: 0,
+            family_distribution: BTreeMap::new(),
+            structural_tokens: BTreeSet::new(),
+            structural_profiles: BTreeMap::new(),
+            structural_edges: BTreeMap::new(),
         }
     }
 
@@ -230,6 +262,52 @@ impl SemanticStore {
         self.families.len()
     }
 
+    pub fn structural_edges(&self) -> Vec<StructuralEdge> {
+        self.structural_edges.values().cloned().collect()
+    }
+
+    /// Mean entropy and family coverage for tokens that have crossed the
+    /// structural threshold. These values are for inspection/reporting only;
+    /// promotion still uses the stricter per-token threshold above.
+    pub fn structural_profile_metrics(&self) -> (usize, f32, f32, u32) {
+        let profiles: Vec<_> = self
+            .structural_tokens
+            .iter()
+            .filter_map(|token| self.structural_profiles.get(token))
+            .collect();
+        let count = profiles.len();
+        if count == 0 {
+            return (0, 0.0, 0.0, 0);
+        }
+        (
+            count,
+            profiles.iter().map(|profile| profile.entropy).sum::<f32>() / count as f32,
+            profiles.iter().map(|profile| profile.coverage).sum::<f32>() / count as f32,
+            profiles.iter().map(|profile| profile.observations).sum(),
+        )
+    }
+
+    pub fn structural_edge_metrics(&self) -> (usize, f32, u32, usize) {
+        let distinct_family_pairs = self
+            .structural_edges
+            .values()
+            .map(|edge| (edge.source_family_id.clone(), edge.target_family_id.clone()))
+            .collect::<BTreeSet<_>>()
+            .len();
+        (
+            self.structural_edges.len(),
+            self.structural_edges
+                .values()
+                .map(|edge| edge.grammatical_weight)
+                .sum(),
+            self.structural_edges
+                .values()
+                .map(|edge| edge.evidence)
+                .sum(),
+            distinct_family_pairs,
+        )
+    }
+
     pub fn families(&self) -> &[SemanticFamily] {
         &self.families
     }
@@ -239,8 +317,36 @@ impl SemanticStore {
             .iter()
             .filter_map(|(token, vector)| {
                 let usage = self.usage.get(token).copied().unwrap_or(0);
-                (usage >= 5 && !self.numeric_tokens.contains(token) && !identity_like(token))
-                    .then_some((token.clone(), vector.clone(), usage))
+                (usage >= 5
+                    && !self.numeric_tokens.contains(token)
+                    && !self.structural_tokens.contains(token)
+                    && !identity_like(token))
+                .then_some((token.clone(), vector.clone(), usage))
+            })
+            .collect()
+    }
+
+    /// Strong, mature undirected associations eligible for community memory.
+    /// This deliberately excludes private one-off links, numbers, and learned
+    /// structural operators: public memory should seed a compact conceptual
+    /// graph, not freeze every local co-occurrence into culture.
+    pub fn community_link_candidates(&self) -> Vec<(String, String, f32)> {
+        self.links
+            .iter()
+            .flat_map(|(left, neighbours)| {
+                neighbours.iter().filter_map(move |(right, link)| {
+                    (left < right
+                        && self.usage.get(left).copied().unwrap_or(0) >= 5
+                        && self.usage.get(right).copied().unwrap_or(0) >= 5
+                        && !self.numeric_tokens.contains(left)
+                        && !self.numeric_tokens.contains(right)
+                        && !self.structural_tokens.contains(left)
+                        && !self.structural_tokens.contains(right)
+                        && !identity_like(left)
+                        && !identity_like(right)
+                        && link.weight >= 0.04)
+                        .then_some((left.clone(), right.clone(), link.weight))
+                })
             })
             .collect()
     }
@@ -262,6 +368,7 @@ impl SemanticStore {
             .filter(|token| {
                 self.usage.get(*token).copied().unwrap_or(0) >= minimum_usage
                     && !self.numeric_tokens.contains(*token)
+                    && !self.structural_tokens.contains(*token)
                     && !identity_like(token)
             })
             .cloned()
@@ -294,10 +401,17 @@ impl SemanticStore {
     }
 
     pub fn observe(&mut self, words: &[String], gain: f32, rng: &mut Rng) {
+        self.update_family_distribution(words);
+        self.refresh_structural_roles();
+        self.record_structural_edges(words, gain);
         let mut cleaned: Vec<String> = words
             .iter()
             .map(|word| normalise(word))
-            .filter(|word| !word.is_empty() && !self.numeric_tokens.contains(word))
+            .filter(|word| {
+                !word.is_empty()
+                    && !self.numeric_tokens.contains(word)
+                    && !self.structural_tokens.contains(word)
+            })
             .collect();
         if cleaned.len() < 2 {
             return;
@@ -400,12 +514,157 @@ impl SemanticStore {
             .collect()
     }
 
+    /// A small local familiarity signal for curiosity selection. Vectors are
+    /// created on first exposure, so vector presence alone is not evidence
+    /// that a word has acquired a useful conceptual neighbourhood.
+    pub fn link_count_for(&self, token: &str) -> usize {
+        self.links.get(token).map(BTreeMap::len).unwrap_or_default()
+    }
+
     pub fn cosine_similarity(&self, left: &str, right: &str) -> Option<f32> {
         let left = self.vectors.get(left)?;
         let right = self.vectors.get(right)?;
         let dot = left.dot(right);
         let denominator = left.dot(left).sqrt() * right.dot(right).sqrt();
         (denominator > f32::EPSILON).then_some(dot / denominator)
+    }
+
+    fn family_for_token(&self, token: &str) -> Option<String> {
+        self.families
+            .iter()
+            .filter(|family| family.members.contains(token))
+            .max_by(|left, right| {
+                left.confidence
+                    .partial_cmp(&right.confidence)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .map(|family| family.id.clone())
+    }
+
+    /// Learn where each token occurs in family space. We count the family
+    /// context around a token rather than assigning it to the family that its
+    /// own vector happens to occupy: connective words earn broad support only
+    /// by repeatedly appearing between varied content families.
+    fn update_family_distribution(&mut self, words: &[String]) {
+        if self.families.len() < MIN_STRUCTURAL_FAMILIES {
+            return;
+        }
+        let tokens: Vec<_> = words
+            .iter()
+            .map(|word| normalise(word))
+            .filter(|word| {
+                !word.is_empty()
+                    && !self.numeric_tokens.contains(word)
+                    && !self.structural_tokens.contains(word)
+            })
+            .collect();
+        for (index, token) in tokens.iter().enumerate() {
+            let context_families: BTreeSet<_> = tokens
+                .iter()
+                .enumerate()
+                .filter(|(other_index, _)| *other_index != index)
+                .filter_map(|(_, other)| self.family_for_token(other))
+                .collect();
+            if context_families.is_empty() {
+                continue;
+            }
+            let distribution = self.family_distribution.entry(token.clone()).or_default();
+            for family_id in context_families {
+                *distribution.entry(family_id).or_default() += 1;
+            }
+        }
+    }
+
+    fn refresh_structural_roles(&mut self) {
+        let effective_family_count = self.families.len().clamp(1, 12) as f32;
+        let candidates: Vec<_> = self
+            .family_distribution
+            .iter()
+            .filter(|(token, _)| !self.structural_tokens.contains(*token))
+            .filter_map(|(token, distribution)| {
+                let observations: u32 = distribution.values().sum();
+                let distinct = distribution.len();
+                if observations < MIN_STRUCTURAL_OBSERVATIONS || distinct < MIN_STRUCTURAL_FAMILIES
+                {
+                    return None;
+                }
+                let entropy = normalised_entropy(distribution);
+                let coverage = (distinct as f32 / effective_family_count).min(1.0);
+                Some((token.clone(), observations, entropy, coverage))
+            })
+            .collect();
+        for (token, observations, entropy, coverage) in candidates {
+            self.structural_profiles.insert(
+                token.clone(),
+                StructuralProfile {
+                    observations,
+                    entropy,
+                    coverage,
+                },
+            );
+            if entropy >= MIN_STRUCTURAL_ENTROPY && coverage >= 0.25 {
+                self.promote_structural_token(&token);
+            }
+        }
+    }
+
+    fn promote_structural_token(&mut self, token: &str) {
+        if !self.structural_tokens.insert(token.to_string()) {
+            return;
+        }
+        // Existing accidental co-occurrence edges would continue to pull
+        // content families together, so remove them when the token becomes a
+        // relation operator. Its vector may remain as historical evidence but
+        // is excluded from family, graph, and community-candidate updates.
+        if let Some(neighbours) = self.links.remove(token) {
+            for neighbour in neighbours.keys() {
+                if let Some(reverse) = self.links.get_mut(neighbour) {
+                    reverse.remove(token);
+                }
+            }
+        }
+        for family in &mut self.families {
+            family.members.remove(token);
+        }
+        self.families.retain(|family| family.members.len() >= 4);
+    }
+
+    fn record_structural_edges(&mut self, words: &[String], gain: f32) {
+        let tokens: Vec<_> = words
+            .iter()
+            .map(|word| normalise(word))
+            .filter(|word| !word.is_empty() && !self.numeric_tokens.contains(word))
+            .collect();
+        for (index, operator) in tokens.iter().enumerate() {
+            if !self.structural_tokens.contains(operator) {
+                continue;
+            }
+            let source = tokens[..index]
+                .iter()
+                .rev()
+                .find_map(|token| self.family_for_token(token));
+            let target = tokens
+                .iter()
+                .skip(index + 1)
+                .find_map(|token| self.family_for_token(token));
+            let (Some(source_family_id), Some(target_family_id)) = (source, target) else {
+                continue;
+            };
+            let key = (
+                source_family_id.clone(),
+                operator.clone(),
+                target_family_id.clone(),
+            );
+            let edge = self.structural_edges.entry(key).or_insert(StructuralEdge {
+                source_family_id,
+                operator: operator.clone(),
+                target_family_id,
+                grammatical_weight: 0.0,
+                evidence: 0,
+            });
+            edge.grammatical_weight = (edge.grammatical_weight + gain).min(8.0);
+            edge.evidence = edge.evidence.saturating_add(1);
+        }
     }
 
     pub fn tick(&mut self, rng: &mut Rng) {
@@ -431,6 +690,7 @@ impl SemanticStore {
             .iter()
             .filter_map(|(token, neighbours)| {
                 (!self.numeric_tokens.contains(token)
+                    && !self.structural_tokens.contains(token)
                     && self.usage.get(token).copied().unwrap_or(0) >= 5
                     && neighbours.len() >= 3)
                     .then_some(token.clone())
@@ -449,6 +709,7 @@ impl SemanticStore {
                     if link.weight >= 0.20
                         && self.usage.get(other).copied().unwrap_or(0) >= 5
                         && !self.numeric_tokens.contains(other)
+                        && !self.structural_tokens.contains(other)
                     {
                         members.insert(other.clone());
                     }
@@ -743,6 +1004,21 @@ fn euclidean_without_anchor(left: &Array1<f32>, right: &Array1<f32>) -> f32 {
         .sqrt()
 }
 
+fn normalised_entropy(distribution: &BTreeMap<String, u32>) -> f32 {
+    let total: f32 = distribution.values().copied().sum::<u32>() as f32;
+    if total <= f32::EPSILON || distribution.len() < 2 {
+        return 0.0;
+    }
+    let entropy = distribution
+        .values()
+        .map(|count| {
+            let probability = *count as f32 / total;
+            -probability * probability.ln()
+        })
+        .sum::<f32>();
+    (entropy / (distribution.len() as f32).ln()).clamp(0.0, 1.0)
+}
+
 fn identity_like(token: &str) -> bool {
     token
         .strip_prefix('a')
@@ -754,8 +1030,10 @@ fn identity_like(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::SemanticStore;
+    use super::{SemanticFamily, SemanticStore};
     use crate::model::Rng;
+    use ndarray::Array1;
+    use std::collections::BTreeSet;
 
     #[test]
     fn observing_context_creates_vectors_and_bidirectional_links() {
@@ -827,5 +1105,60 @@ mod tests {
         assert!(child.vector("river").is_some());
         assert!(child.link_count() > 0);
         assert!(child.reasoning_candidates(3).contains(&"river".to_string()));
+    }
+
+    #[test]
+    fn high_entropy_connector_becomes_an_edge_operator_not_a_family_member() {
+        let mut rng = Rng::new(21);
+        let mut store = SemanticStore::new();
+        let groups = [
+            ["prince", "royal", "crown", "palace"],
+            ["tower", "stone", "tall", "window"],
+            ["bird", "wing", "nest", "fly"],
+        ];
+        for group in groups {
+            let words = group.map(str::to_string);
+            for _ in 0..3 {
+                store.observe(&words, 0.30, &mut rng);
+            }
+        }
+        for (index, group) in groups.iter().enumerate() {
+            store.families.push(SemanticFamily {
+                id: format!("F{index}"),
+                centroid: Array1::zeros(super::semantic_dimensions()),
+                members: group
+                    .iter()
+                    .map(|word| (*word).to_string())
+                    .collect::<BTreeSet<_>>(),
+                confidence: 0.9,
+                strength: 0.5,
+            });
+        }
+
+        for _ in 0..2 {
+            for sentence in [
+                ["prince", "have", "tower"],
+                ["tower", "have", "bird"],
+                ["bird", "have", "prince"],
+            ] {
+                store.observe(&sentence.map(str::to_string), 0.20, &mut rng);
+            }
+        }
+
+        assert_eq!(store.structural_profile_metrics().0, 1);
+        assert!(!store.reasoning_candidates(1).contains(&"have".to_string()));
+        assert!(
+            store
+                .structural_edges()
+                .iter()
+                .any(|edge| edge.operator == "have" && edge.evidence > 0)
+        );
+        assert!(
+            store
+                .families()
+                .iter()
+                .all(|family| !family.members.contains("have"))
+        );
+        assert!(store.links.get("have").is_none());
     }
 }

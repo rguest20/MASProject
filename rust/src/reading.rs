@@ -121,6 +121,14 @@ impl ReadingBridge {
         self.promoted.len()
     }
 
+    /// Story words that have earned enough recurring contextual evidence.
+    /// Exploration ranks this frontier by each agent's semantic connectivity;
+    /// normal conversation still admits story vocabulary only through
+    /// `relevant_word_scores`.
+    pub fn exploration_candidates(&self) -> Vec<String> {
+        self.promoted.iter().cloned().collect()
+    }
+
     fn refresh_promotions(&mut self) {
         for (word, sentence_ids) in &self.token_sentences {
             let contexts = self
