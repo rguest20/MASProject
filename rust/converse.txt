@@ -1,0 +1,18 @@
+# Write a completed Ryan line below and save the file.  In watch mode the
+# community will append one answer after a short thinking period, followed by
+# a new blank Ryan prompt.  It currently understands controlled forms:
+#
+# Any other Ryan sentence, including "Hello", is passed to the community as
+# exploratory tokens.  It will answer in its own learned language rather than
+# with a hard-coded English reply.
+#
+# Ryan: Hello
+# Ryan: Help
+# Ryan: How many is 12?
+# Ryan: Show r3
+# Ryan: Do a2 to r3 with 4
+# Ryan: Teach r3 is apple
+# Ryan: Teach a2 means move
+# Ryan: What did you do?
+
+Ryan:

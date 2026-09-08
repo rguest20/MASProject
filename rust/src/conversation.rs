@@ -1800,7 +1800,13 @@ fn parse_world_question(words: &[String]) -> Option<&str> {
             .filter(|word| !matches!(word.as_str(), "a" | "an" | "the"))
             .filter(|word| is_topic(word))
             .collect();
-        (content.len() == 1).then_some(content[0].as_str())
+        // `then_some` evaluates its argument eagerly, so indexing there
+        // panics for valid open questions with no topic words.
+        if content.len() == 1 {
+            Some(content[0].as_str())
+        } else {
+            None
+        }
     } else {
         None
     }

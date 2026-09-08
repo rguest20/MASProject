@@ -129,6 +129,29 @@ impl ReadingBridge {
         self.promoted.iter().cloned().collect()
     }
 
+    /// Corpus-held evidence for an inquiry claim. This is deliberately a
+    /// count, rather than a truth value: story co-occurrence can corroborate
+    /// a proposal but cannot prove a fact about the physical world.
+    pub fn inquiry_evidence(&self, left: &str, right: &str) -> usize {
+        let Some(left_sentences) = self.token_sentences.get(left) else {
+            return 0;
+        };
+        let Some(right_sentences) = self.token_sentences.get(right) else {
+            return 0;
+        };
+        left_sentences.intersection(right_sentences).count()
+    }
+
+    pub fn inquiry_neighbours(&self, word: &str) -> Vec<String> {
+        self.contexts
+            .get(word)
+            .into_iter()
+            .flat_map(|words| words.iter())
+            .filter(|word| self.promoted.contains(*word))
+            .cloned()
+            .collect()
+    }
+
     fn refresh_promotions(&mut self) {
         for (word, sentence_ids) in &self.token_sentences {
             let contexts = self

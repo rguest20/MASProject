@@ -6,6 +6,7 @@ mod config;
 mod conversation;
 mod dictionary;
 mod evolution;
+mod inquiry;
 mod language;
 mod lexicon;
 mod machine;

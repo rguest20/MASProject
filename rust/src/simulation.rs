@@ -43,6 +43,7 @@ pub struct Coordinator {
     tasks: TaskEngine,
     capability_lab: crate::capabilities::CapabilityLab,
     machine_lab: crate::machine::MachineLab,
+    inquiry_lab: crate::inquiry::InquiryLab,
     community_semantics: CommunitySemanticMap,
     phase3: Phase3Runtime,
     rng: Rng,
@@ -197,6 +198,7 @@ impl Coordinator {
             capability_lab: crate::capabilities::CapabilityLab::new(options.capability_limit)
                 .with_teaching(options.capability_teaching),
             machine_lab: crate::machine::MachineLab::new(seed),
+            inquiry_lab: crate::inquiry::InquiryLab::default(),
             community_semantics,
             phase3,
             rng,
@@ -228,6 +230,13 @@ impl Coordinator {
             .tick(&mut self.agents, self.generation, self.seed, &self.run_dir)?;
         self.machine_lab
             .tick(&mut self.agents, self.generation, &self.run_dir)?;
+        self.inquiry_lab.tick(
+            &mut self.agents,
+            self.generation,
+            &mut self.rng,
+            &self.reading,
+            &self.run_dir,
+        )?;
         let evolution_metrics = evolve(
             &mut self.agents,
             &self.lexicon,
