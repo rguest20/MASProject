@@ -13,6 +13,7 @@ pub struct RunOptions {
     pub dimensions: Option<usize>,
     pub capability_limit: usize,
     pub capability_teaching: bool,
+    pub capability_enabled: bool,
     pub community_memory_path: Option<PathBuf>,
     pub use_community_memory: bool,
 }
@@ -29,6 +30,7 @@ impl Default for RunOptions {
             dimensions: None,
             capability_limit: crate::capabilities::DEFAULT_ACTION_LIMIT,
             capability_teaching: true,
+            capability_enabled: false,
             community_memory_path: None,
             use_community_memory: true,
         }

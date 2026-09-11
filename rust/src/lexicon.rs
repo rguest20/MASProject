@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+use crate::numeric::{clean_token, digits};
+
 #[derive(Clone, Debug)]
 pub struct CommunityLexicon {
     min_successes: u32,
@@ -184,20 +186,26 @@ impl CommunityLexicon {
             .unwrap_or(0)
     }
 
-    pub fn numeric_conventions(&self) -> BTreeMap<u32, String> {
-        self.numeric_promoted.clone()
+    pub fn numeric_conventions(&self) -> &BTreeMap<u32, String> {
+        &self.numeric_promoted
     }
 
-    pub fn referential_conventions(&self) -> BTreeMap<String, String> {
-        self.referential_promoted.clone()
+    pub fn numeric_digit(&self, token: &str) -> Option<u32> {
+        self.numeric_promoted
+            .iter()
+            .find_map(|(digit, public)| (public == token).then_some(*digit))
     }
 
-    pub fn action_conventions(&self) -> BTreeMap<String, String> {
-        self.action_promoted.clone()
+    pub fn referential_conventions(&self) -> &BTreeMap<String, String> {
+        &self.referential_promoted
     }
 
-    pub fn grammar_conventions(&self) -> BTreeMap<String, Vec<String>> {
-        self.grammar_promoted.clone()
+    pub fn action_conventions(&self) -> &BTreeMap<String, String> {
+        &self.action_promoted
+    }
+
+    pub fn grammar_conventions(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.grammar_promoted
     }
 
     pub fn referent_for_signal(&self, token: &str) -> Option<&str> {
@@ -427,25 +435,6 @@ fn restore_votes(value: &Value, target: &mut BTreeMap<String, u32>) {
             *target.entry(token).or_default() += support;
         }
     }
-}
-
-fn clean_token(value: &str) -> Option<String> {
-    let value = value.trim().to_ascii_lowercase();
-    (!value.is_empty()).then_some(value)
-}
-
-fn digits(value: u32, base: u32) -> Vec<u32> {
-    if value == 0 {
-        return vec![0];
-    }
-    let mut remaining = value;
-    let mut digits = Vec::new();
-    while remaining > 0 {
-        digits.push(remaining % base);
-        remaining /= base;
-    }
-    digits.reverse();
-    digits
 }
 
 fn confidence<T: Ord>(evidence: Option<&BTreeMap<T, u32>>) -> f64 {

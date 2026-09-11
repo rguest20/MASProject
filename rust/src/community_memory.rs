@@ -49,6 +49,7 @@ pub fn restore(
     let relationships = semantics.restore_relationships_memory_value(
         value.get("semantic_relationships").unwrap_or(&Value::Null),
     );
+    semantics.restore_patterns_memory_value(value.get("semantic_patterns").unwrap_or(&Value::Null));
     let seeded_tokens = semantics.seed_agents(agents, rng);
     MemoryStatus {
         loaded: true,
@@ -71,6 +72,7 @@ pub fn save(
         "generation": generation,
         "semantic": semantics.memory_value(),
         "semantic_relationships": semantics.relationships_memory_value(),
+        "semantic_patterns": semantics.patterns_memory_value(),
         "lexicon": lexicon.memory_value(),
     });
     if let Some(parent) = path.parent() {

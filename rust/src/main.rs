@@ -8,8 +8,8 @@ mod dictionary;
 mod evolution;
 mod inquiry;
 mod language;
+mod learning;
 mod lexicon;
-mod machine;
 mod model;
 mod numeric;
 mod phase3;
@@ -29,7 +29,7 @@ use simulation::Coordinator;
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -- [--generations N] [--watch] [--delay SECONDS] [--converse PATH] [--seed N] [--dimensions N] [--community-memory PATH] [--fresh-community] [--capability-limit N] [--no-capability-teaching]"
+        "Usage: cargo run -- [--generations N] [--watch] [--delay SECONDS] [--converse PATH] [--seed N] [--dimensions N] [--community-memory PATH] [--fresh-community] [--capability-limit N] [--capabilities] [--no-capability-teaching]"
     );
 }
 
@@ -80,6 +80,7 @@ fn parse_options() -> Result<RunOptions, String> {
                 ));
             }
             "--no-capability-teaching" => options.capability_teaching = false,
+            "--capabilities" => options.capability_enabled = true,
             "--capability-limit" => {
                 let limit: usize = args
                     .next()
@@ -120,20 +121,18 @@ fn main() {
     };
     println!("Run directory: {}", coordinator.run_dir.display());
     println!(
-        "Capability monitor: {}",
-        coordinator
-            .run_dir
-            .join("capability_monitor.html")
-            .display()
+        "Community inquiry: {}",
+        coordinator.run_dir.join("inquiry_monitor.html").display()
     );
-    println!(
-        "Machine monitor: {}",
-        coordinator.run_dir.join("machine_monitor.html").display()
-    );
-    println!(
-        "Machine action links: {}",
-        coordinator.run_dir.join("machine_links.html").display()
-    );
+    if options.capability_enabled {
+        println!(
+            "Capability monitor: {}",
+            coordinator
+                .run_dir
+                .join("capability_monitor.html")
+                .display()
+        );
+    }
     println!("Seed: {}", coordinator.seed);
     println!("Conversation: {}", options.converse_path.display());
     println!(
@@ -162,10 +161,6 @@ fn main() {
                 eprintln!("Generation failed: {error}");
                 break;
             }
-            if coordinator.machine_won() {
-                println!("Machine process mastered: 64 steps complete. Exiting.");
-                break;
-            }
             if options.delay_ms > 0 {
                 thread::sleep(Duration::from_millis(options.delay_ms));
             }
@@ -176,13 +171,13 @@ fn main() {
                 eprintln!("Generation failed: {error}");
                 std::process::exit(1);
             }
-            if coordinator.machine_won() {
-                println!("Machine process mastered: 64 steps complete. Exiting.");
-                break;
-            }
         }
     }
 
+    if let Err(error) = coordinator.save_inquiry_memory() {
+        eprintln!("Inquiry checkpoint failed: {error}");
+        std::process::exit(1);
+    }
     println!("Artifacts:");
     println!("  report: {}", coordinator.report_path.display());
     println!("  metrics: {}", coordinator.metrics_path.display());

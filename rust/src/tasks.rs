@@ -10,7 +10,7 @@
 use std::collections::VecDeque;
 
 use crate::lexicon::CommunityLexicon;
-use crate::model::{Agent, Rng};
+use crate::model::{Agent, Rng, two_agents};
 
 const REFERENTS: [&str; 6] = ["r0", "r1", "r2", "r3", "r4", "r5"];
 const ACTIONS: [&str; 4] = ["a0", "a1", "a2", "a3"];
@@ -120,7 +120,7 @@ impl TaskEngine {
             self.next_id += 1;
             match slot {
                 0 => self.numeric_reconciliation(agents, lexicon, rng, &mut metrics),
-                1 if numeric_ready && self.generation % 6 != 0 => {
+                1 if numeric_ready && !self.generation.is_multiple_of(6) => {
                     self.translate_quantity(agents, lexicon, rng, &mut metrics)
                 }
                 1 => self.compare_numbers(agents, lexicon, rng, &mut metrics),
@@ -391,7 +391,7 @@ impl TaskEngine {
         rng: &mut Rng,
         metrics: &mut TaskMetrics,
     ) {
-        let (speaker_id, listener_id) = pair(agents.len(), rng);
+        let (speaker_id, listener_id) = rng.pair(agents.len());
         let (speaker, listener) = two_agents(agents, speaker_id, listener_id);
         let base = speaker.numeric.base;
         let left_value = rng.index((base * base).max(2) as usize) as u32;
@@ -423,7 +423,7 @@ impl TaskEngine {
         rng: &mut Rng,
         metrics: &mut TaskMetrics,
     ) {
-        let (speaker_id, listener_id) = pair(agents.len(), rng);
+        let (speaker_id, listener_id) = rng.pair(agents.len());
         let (speaker, listener) = two_agents(agents, speaker_id, listener_id);
         let base = lexicon.community_base().unwrap_or(speaker.numeric.base);
         let value = rng.index((base * base + base * 4).max(2) as usize) as u32;
@@ -458,10 +458,10 @@ impl TaskEngine {
             metrics.failed += 1;
             return;
         };
-        let (speaker_id, listener_id) = pair(agents.len(), rng);
+        let (speaker_id, listener_id) = rng.pair(agents.len());
         let (speaker, listener) = two_agents(agents, speaker_id, listener_id);
         let phrase = format!("{referent_signal} {number_signal}");
-        speaker.observe(&[phrase.clone()], 0.12, rng);
+        speaker.observe(std::slice::from_ref(&phrase), 0.12, rng);
         listener.observe(&[phrase], 0.12, rng);
         let order = ["referent".to_string(), "number".to_string()];
         lexicon.observe_grammar_success("referent_quantity", &order);
@@ -481,7 +481,7 @@ impl TaskEngine {
         let trial = if !self.numeric_memory.is_empty() && rng.unit() < 0.65 {
             self.numeric_memory[rng.index(self.numeric_memory.len())].clone()
         } else {
-            let (speaker, listener) = pair(agents.len(), rng);
+            let (speaker, listener) = rng.pair(agents.len());
             let base = agents[speaker]
                 .numeric
                 .base
@@ -495,8 +495,8 @@ impl TaskEngine {
         let (speaker, listener) = two_agents(agents, trial.speaker, trial.listener);
         let signal = speaker.numeric.speak_number(trial.value, lexicon, rng);
         let understood = listener.numeric.decode_phrase(&signal, lexicon) == Some(trial.value);
-        speaker.observe(&[signal.clone()], 0.10, rng);
-        listener.observe(&[signal.clone()], 0.10, rng);
+        speaker.observe(std::slice::from_ref(&signal), 0.10, rng);
+        listener.observe(std::slice::from_ref(&signal), 0.10, rng);
         metrics.attempted += 1;
         if understood {
             lexicon.observe_numeric_success(trial.value, &signal);
@@ -524,7 +524,7 @@ impl TaskEngine {
         let trial = if !self.referential_memory.is_empty() && rng.unit() < 0.65 {
             self.referential_memory[rng.index(self.referential_memory.len())].clone()
         } else {
-            let (speaker, listener) = pair(agents.len(), rng);
+            let (speaker, listener) = rng.pair(agents.len());
             SignalTrial {
                 speaker,
                 listener,
@@ -534,8 +534,8 @@ impl TaskEngine {
         let (speaker, listener) = two_agents(agents, trial.speaker, trial.listener);
         let signal = speaker.referent_signal(&trial.meaning);
         let understood = listener.referent_for(&signal) == Some(trial.meaning.as_str());
-        speaker.observe(&[signal.clone()], 0.10, rng);
-        listener.observe(&[signal.clone()], 0.10, rng);
+        speaker.observe(std::slice::from_ref(&signal), 0.10, rng);
+        listener.observe(std::slice::from_ref(&signal), 0.10, rng);
         metrics.attempted += 1;
         if understood {
             lexicon.observe_referential_success(&trial.meaning, &signal);
@@ -560,7 +560,7 @@ impl TaskEngine {
         let trial = if !self.action_memory.is_empty() && rng.unit() < 0.65 {
             self.action_memory[rng.index(self.action_memory.len())].clone()
         } else {
-            let (speaker, listener) = pair(agents.len(), rng);
+            let (speaker, listener) = rng.pair(agents.len());
             SignalTrial {
                 speaker,
                 listener,
@@ -570,8 +570,8 @@ impl TaskEngine {
         let (speaker, listener) = two_agents(agents, trial.speaker, trial.listener);
         let signal = speaker.action_signal(&trial.meaning);
         let understood = listener.action_for(&signal) == Some(trial.meaning.as_str());
-        speaker.observe(&[signal.clone()], 0.10, rng);
-        listener.observe(&[signal.clone()], 0.10, rng);
+        speaker.observe(std::slice::from_ref(&signal), 0.10, rng);
+        listener.observe(std::slice::from_ref(&signal), 0.10, rng);
         metrics.attempted += 1;
         if understood {
             lexicon.observe_action_success(&trial.meaning, &signal);
@@ -614,9 +614,9 @@ impl TaskEngine {
             "number".to_string(),
         ];
         let signal = format!("{referent_signal} {action_signal} {number_signal}");
-        let (speaker_id, listener_id) = pair(agents.len(), rng);
+        let (speaker_id, listener_id) = rng.pair(agents.len());
         let (speaker, listener) = two_agents(agents, speaker_id, listener_id);
-        speaker.observe(&[signal.clone()], 0.12, rng);
+        speaker.observe(std::slice::from_ref(&signal), 0.12, rng);
         listener.observe(&[signal], 0.12, rng);
         lexicon.observe_grammar_success("referent_action_number", &order);
         reward(speaker, listener);
@@ -624,15 +624,6 @@ impl TaskEngine {
         metrics.solved += 1;
         metrics.grammar_successes += 1;
     }
-}
-
-fn pair(size: usize, rng: &mut Rng) -> (usize, usize) {
-    let speaker = rng.index(size);
-    let mut listener = rng.index(size - 1);
-    if listener >= speaker {
-        listener += 1;
-    }
-    (speaker, listener)
 }
 
 fn practice_prompt(kind: StructuredPractice, trial: &ConceptTrial) -> Vec<String> {
@@ -723,17 +714,6 @@ fn sample_indices(size: usize, count: usize, rng: &mut Rng) -> Vec<usize> {
     }
     pool.truncate(count);
     pool
-}
-
-fn two_agents(agents: &mut [Agent], left: usize, right: usize) -> (&mut Agent, &mut Agent) {
-    assert_ne!(left, right);
-    if left < right {
-        let (head, tail) = agents.split_at_mut(right);
-        (&mut head[left], &mut tail[0])
-    } else {
-        let (head, tail) = agents.split_at_mut(left);
-        (&mut tail[0], &mut head[right])
-    }
 }
 
 fn reward(speaker: &mut Agent, listener: &mut Agent) {

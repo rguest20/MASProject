@@ -66,32 +66,27 @@ pub fn evolve(
         .sum::<f64>()
         / agents.len() as f64;
 
-    let cull_index = agents
-        .iter()
-        .enumerate()
-        .min_by(|left, right| {
-            left.1
-                .total_fitness
-                .partial_cmp(&right.1.total_fitness)
-                .unwrap_or(Ordering::Equal)
-        })
-        .map(|(index, _)| index)
-        .expect("population has at least three agents");
+    // Cull from the lower-performing third, with a small exploration chance
+    // for each candidate. This prevents one unlucky generation from deleting
+    // the only agent carrying a useful but not-yet-rewarded experiment.
+    let mut ranked: Vec<_> = agents.iter().enumerate().collect();
+    ranked.sort_by(|left, right| {
+        left.1
+            .total_fitness
+            .partial_cmp(&right.1.total_fitness)
+            .unwrap_or(Ordering::Equal)
+    });
+    let pool = (ranked.len() / 3).max(1);
+    let cull_index = ranked[rng.index(pool)].0;
     let id = agents[cull_index].id;
     agents.remove(cull_index);
     let parent_indices = select_parents(agents, rng);
     let parents = [
-        agents[parent_indices[0]].clone(),
-        agents[parent_indices[1]].clone(),
-        agents[parent_indices[2]].clone(),
+        &agents[parent_indices[0]],
+        &agents[parent_indices[1]],
+        &agents[parent_indices[2]],
     ];
-    let (child, program_mutated) = make_child(
-        id,
-        [&parents[0], &parents[1], &parents[2]],
-        lexicon,
-        generation,
-        rng,
-    );
+    let (child, program_mutated) = make_child(id, parents, lexicon, generation, rng);
     metrics.child_vocabulary = child.vocabulary.len();
     metrics.child_semantic_links = child.semantics.link_count();
     metrics.child_semantic_families = child.semantics.family_count();
@@ -299,9 +294,9 @@ fn make_child(
         vocabulary.extend(parent.vocabulary.iter().cloned());
     }
     let mut public_vocabulary = BTreeSet::new();
-    public_vocabulary.extend(lexicon.numeric_conventions().into_values());
-    public_vocabulary.extend(lexicon.referential_conventions().into_values());
-    public_vocabulary.extend(lexicon.action_conventions().into_values());
+    public_vocabulary.extend(lexicon.numeric_conventions().values().cloned());
+    public_vocabulary.extend(lexicon.referential_conventions().values().cloned());
+    public_vocabulary.extend(lexicon.action_conventions().values().cloned());
     vocabulary.extend(public_vocabulary.iter().cloned());
     let mut ranked_vocabulary: Vec<_> = vocabulary.into_iter().collect();
     ranked_vocabulary.sort_by(|left, right| {

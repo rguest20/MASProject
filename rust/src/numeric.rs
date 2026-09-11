@@ -32,7 +32,7 @@ impl NumericSystem {
             overlays: BTreeMap::new(),
         };
         for digit in 0..base {
-            let token = system.fresh_symbol(&BTreeSet::new(), rng);
+            let token = system.fresh_symbol(&system.used_tokens(), rng);
             system.inverse_symbols.insert(token.clone(), digit);
             system.symbols.insert(digit, token);
         }
@@ -46,9 +46,7 @@ impl NumericSystem {
     pub fn digit_for(&self, token: &str, lexicon: &CommunityLexicon) -> Option<u32> {
         let token = clean_token(token)?;
         lexicon
-            .numeric_conventions()
-            .into_iter()
-            .find_map(|(digit, public)| (public == token).then_some(digit))
+            .numeric_digit(&token)
             .or_else(|| {
                 self.overlays
                     .iter()
@@ -78,7 +76,7 @@ impl NumericSystem {
         rng: &mut Rng,
     ) -> String {
         let base = lexicon.community_base().unwrap_or(self.base);
-        self.digits(value, base)
+        digits(value, base)
             .into_iter()
             .map(|digit| {
                 lexicon
@@ -138,28 +136,9 @@ impl NumericSystem {
         }
     }
 
-    fn digits(&self, value: u32, base: u32) -> Vec<u32> {
-        if value == 0 {
-            return vec![0];
-        }
-        let mut value = value;
-        let mut digits = Vec::new();
-        while value > 0 {
-            digits.push(value % base);
-            value /= base;
-        }
-        digits.reverse();
-        digits
-    }
-
     fn symbol_for(&mut self, digit: u32, rng: &mut Rng) -> String {
         if let Some(token) = self.symbols.get(&digit)
-            && self
-                .symbols
-                .iter()
-                .filter(|(other, value)| **other != digit && *value == token)
-                .count()
-                == 0
+            && self.inverse_symbols.get(token) == Some(&digit)
         {
             return token.clone();
         }
@@ -219,9 +198,23 @@ impl NumericSystem {
     }
 }
 
-fn clean_token(value: &str) -> Option<String> {
+pub fn clean_token(value: &str) -> Option<String> {
     let value = value.trim().to_ascii_lowercase();
     (!value.is_empty()).then_some(value)
+}
+
+pub fn digits(value: u32, base: u32) -> Vec<u32> {
+    if value == 0 {
+        return vec![0];
+    }
+    let mut remaining = value;
+    let mut result = Vec::new();
+    while remaining > 0 {
+        result.push(remaining % base);
+        remaining /= base;
+    }
+    result.reverse();
+    result
 }
 
 #[cfg(test)]

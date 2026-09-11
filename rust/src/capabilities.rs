@@ -399,10 +399,6 @@ struct ScaffoldEdge {
 
 impl SemanticScaffold {
     fn update(&mut self, agents: &[Agent], actions: usize) {
-        let mut pooled = CapabilityMemory::default();
-        for agent in agents {
-            pooled.merge(&agent.capabilities);
-        }
         for agent in agents {
             for action in 0..actions {
                 if let Some(rule) = agent.capabilities.rules.get(&action) {
@@ -415,16 +411,14 @@ impl SemanticScaffold {
                     }
                 }
             }
-        }
-        for agent in agents {
             for (&action, samples) in &agent.capabilities.observations {
                 for &(state, next) in samples {
                     if state == next {
                         for bit in 0..MAX_ACTION_LIMIT {
-                            if state & (1 << bit) != 0 {
-                                if let Some(edge) = self.edges.get_mut(&(bit, action)) {
-                                    edge.contradiction += 1;
-                                }
+                            if state & (1 << bit) != 0
+                                && let Some(edge) = self.edges.get_mut(&(bit, action))
+                            {
+                                edge.contradiction += 1;
                             }
                         }
                     }
@@ -440,7 +434,7 @@ impl SemanticScaffold {
                 *action < actions
                     && edge.lineages.len() >= 2
                     && edge.support >= edge.contradiction.saturating_mul(2).max(1)
-                    && memory.rules.get(action).is_none()
+                    && !memory.rules.contains_key(action)
             })
             .map(|((_, action), _)| *action)
             .collect::<Vec<_>>();

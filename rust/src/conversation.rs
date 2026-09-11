@@ -16,7 +16,6 @@ pub struct Conversation {
     question_pending: Option<PendingPrompt>,
     processed_question_answer: Option<(usize, String)>,
     last_question_answer_generation: Option<usize>,
-    human_tokens: BTreeSet<String>,
     human_pool: BTreeMap<String, f64>,
     transitions: BTreeMap<String, BTreeMap<String, usize>>,
     english_bigrams: BTreeMap<(String, String), f64>,
@@ -43,6 +42,7 @@ pub struct Conversation {
     resolved_question_topic: Option<String>,
     numeric_literals: NumericLiteralMemory,
     last_reply: Option<String>,
+    last_claim: Option<(String, String, String)>,
     positive_feedback: usize,
     negative_feedback: usize,
 }
@@ -262,11 +262,7 @@ impl NumericLiteralMemory {
     }
 
     fn decimal_digits(value: u32) -> Vec<u32> {
-        value
-            .to_string()
-            .bytes()
-            .map(|digit| (digit - b'0') as u32)
-            .collect()
+        crate::numeric::digits(value, 10)
     }
 
     fn counts(&self) -> (usize, u32) {
@@ -291,7 +287,6 @@ impl Conversation {
             question_pending: None,
             processed_question_answer: None,
             last_question_answer_generation: None,
-            human_tokens: BTreeSet::new(),
             human_pool: BTreeMap::new(),
             transitions: BTreeMap::new(),
             english_bigrams: BTreeMap::new(),
@@ -313,6 +308,7 @@ impl Conversation {
             resolved_question_topic: None,
             numeric_literals: NumericLiteralMemory::default(),
             last_reply: None,
+            last_claim: None,
             positive_feedback: 0,
             negative_feedback: 0,
         }
@@ -490,10 +486,10 @@ impl Conversation {
     ) -> String {
         let trimmed = prompt.trim();
         if matches!(trimmed, "+" | "feedback +") {
-            return self.apply_feedback(1.0);
+            return self.apply_feedback(1.0, world);
         }
         if matches!(trimmed, "-" | "feedback -") {
-            return self.apply_feedback(-1.0);
+            return self.apply_feedback(-1.0, world);
         }
         let raw_words = tokenise(trimmed);
         let task = classify_dialogue_task(trimmed, &raw_words);
@@ -547,17 +543,41 @@ impl Conversation {
             }
         }
         if let Some(subject) = parse_world_question(&words) {
-            if let Some(property) = world.fact(subject) {
+            if let Some(property) = world
+                .relation(subject, "is")
+                .or_else(|| world.fact(subject))
+            {
                 return format!("{subject} is {property}.");
             }
         }
 
+        if let Some((relation, object)) = parse_relation_question(&words)
+            && let Some(subject) = world.relation_subject(relation, object)
+        {
+            return format!("{subject} {relation} {object}.");
+        }
+
+        if let Some((subject, relation)) = parse_subject_relation_question(&words)
+            && let Some(object) = world.relation(subject, relation)
+        {
+            return format!("{subject} {relation} {object}.");
+        }
+
         if let Some((subject, property)) = parse_assertion(&words) {
             world.observe(&subject, &property, 0.5);
+            self.last_claim = Some((subject.clone(), "is".to_string(), property.clone()));
+            // The copula is retained as a directional relation. The leading
+            // discourse token (for example `true,`) remains outside this
+            // proposition and cannot become the subject of the claim.
             // Teaching is evidence, not an invitation to continue the last
             // free-association path. State the new grounded proposition and
             // leave the next turn open for correction or extension.
             return format!("{subject} is {property}.");
+        }
+        if let Some((subject, relation, object)) = parse_general_assertion(&words) {
+            world.observe_relation(&subject, &relation, &object, 0.35);
+            self.last_claim = Some((subject.clone(), relation.clone(), object.clone()));
+            return format!("{subject} {relation} {object}.");
         }
 
         let topic = self.active_topic.clone();
@@ -672,7 +692,6 @@ impl Conversation {
         agents: &mut [Agent],
         rng: &mut Rng,
     ) {
-        self.human_tokens.extend(words.iter().cloned());
         for word in words {
             *self.human_pool.entry(word.clone()).or_default() += 1.0;
         }
@@ -1305,6 +1324,12 @@ impl Conversation {
             .sum::<f64>()
             / words.len() as f64;
         let copied_prompt = (words == prompt_words) as u8 as f64;
+        let reply_feedback = self
+            .reply_feedback
+            .get(sentence)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(-3.0, 3.0);
         0.35 * familiar
             + 0.32 * local_pairs
             + 0.35 * bigrams
@@ -1312,6 +1337,7 @@ impl Conversation {
             + 0.15 * reading
             + 0.16 * human_repetition
             - 0.25 * copied_prompt
+            + 0.45 * reply_feedback
     }
 
     fn bigram_strength(&self, pair: &(String, String)) -> f64 {
@@ -1354,11 +1380,16 @@ impl Conversation {
             .collect()
     }
 
-    fn apply_feedback(&mut self, reward: f64) -> String {
+    fn apply_feedback(&mut self, reward: f64, world: &mut WorldModel) -> String {
         let Some(reply) = self.last_reply.clone() else {
             return "There is no recent community sentence to score.".to_string();
         };
         let reward = if reward > 0.0 { 1.0 } else { -1.0 };
+        if reward < 0.0
+            && let Some((subject, relation, object)) = self.last_claim.take()
+        {
+            world.contradict_relation(&subject, &relation, &object);
+        }
         *self.reply_feedback.entry(reply.clone()).or_default() += reward;
         let words = tokenise(&reply);
         for pair in words.windows(2) {
@@ -1882,6 +1913,43 @@ fn parse_assertion(words: &[String]) -> Option<(String, String)> {
         .collect::<Vec<_>>()
         .join(" ");
     (!property.is_empty()).then_some((subject, property))
+}
+
+fn parse_general_assertion(words: &[String]) -> Option<(String, String, String)> {
+    if words.len() < 3 || matches!(words.first()?.as_str(), "true" | "false") {
+        return None;
+    }
+    let subject = words.first().filter(|word| is_topic(word))?.clone();
+    let relation = words.get(1).filter(|word| is_topic(word))?.clone();
+    let object = words[2..]
+        .iter()
+        .filter(|word| is_topic(word))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!object.is_empty() && relation != "is" && relation != "are")
+        .then_some((subject, relation, object))
+}
+
+fn parse_relation_question(words: &[String]) -> Option<(&str, &str)> {
+    if words.len() >= 3 && words.first().is_some_and(|word| word == "who") {
+        let relation = words.get(1).filter(|word| is_topic(word))?;
+        let object = words[2..].iter().find(|word| is_topic(word))?;
+        return Some((relation, object));
+    }
+    None
+}
+
+fn parse_subject_relation_question(words: &[String]) -> Option<(&str, &str)> {
+    if words.len() >= 4
+        && words.first().is_some_and(|word| word == "what")
+        && words.get(1).is_some_and(|word| word == "does")
+    {
+        let subject = words.get(2).filter(|word| is_topic(word))?;
+        let relation = words.get(3).filter(|word| is_topic(word))?;
+        return Some((subject, relation));
+    }
+    None
 }
 
 fn is_topic(word: &str) -> bool {
@@ -2638,7 +2706,12 @@ mod tests {
         let apple = tokenise("Apple is red.");
         conversation.update_conversation_state("Apple is red.", &apple);
         conversation.last_reply = Some("apple is red".to_string());
-        assert!(conversation.apply_feedback(-1.0).contains("rejected"));
+        let mut world = WorldModel::default();
+        assert!(
+            conversation
+                .apply_feedback(-1.0, &mut world)
+                .contains("rejected")
+        );
         assert!(conversation.reply_feedback["apple is red"] < 0.0);
         assert_eq!(conversation.last_reply.as_deref(), Some("apple is red"));
         assert_eq!(conversation.topic(), None);

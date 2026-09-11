@@ -1,5 +1,14 @@
 # Rust implementation
 
+The current community inquiry loop, monitor, evaluation limits, and next
+architectural steps are documented in [COMMUNITY_MIND_REVIEW.md](COMMUNITY_MIND_REVIEW.md).
+It replaces the fixed five-fact inquiry routine with source-grounded peer
+investigations and a shared agenda. New runs print the inquiry monitor path.
+Inquiry checkpoints now preserve each learner's sourced experience and active
+questions across runs. The monitor reports a transfer test taken before any new
+training, including the change from the saved score. See the review for scope,
+checkpoint timing, and the isolated `check_inquiry_restart.py` test.
+
 This is a native Rust counterpart to the Python MAS simulation. Its core is
 standard-library Rust, with `ndarray` (Rayon-enabled) for dense semantic
 vectors—the part of the workload where Python object overhead becomes most

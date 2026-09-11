@@ -38,9 +38,49 @@ pub fn configure_semantic_dimensions(dimensions: usize) -> Result<(), String> {
 }
 
 #[derive(Clone, Debug)]
+pub enum RelationEvidenceKind {
+    Cooccurrence,
+    Ordered,
+    Predictive,
+    Verified,
+    Contradiction,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RelationEvidence {
+    pub cooccurrence: u32,
+    pub ordered: u32,
+    pub predictive: u32,
+    pub verified: u32,
+    pub contradiction: u32,
+}
+
+impl RelationEvidence {
+    fn observe(&mut self, kind: RelationEvidenceKind) {
+        let counter = match kind {
+            RelationEvidenceKind::Cooccurrence => &mut self.cooccurrence,
+            RelationEvidenceKind::Ordered => &mut self.ordered,
+            RelationEvidenceKind::Predictive => &mut self.predictive,
+            RelationEvidenceKind::Verified => &mut self.verified,
+            RelationEvidenceKind::Contradiction => &mut self.contradiction,
+        };
+        *counter = counter.saturating_add(1);
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.cooccurrence = self.cooccurrence.saturating_add(other.cooccurrence);
+        self.ordered = self.ordered.saturating_add(other.ordered);
+        self.predictive = self.predictive.saturating_add(other.predictive);
+        self.verified = self.verified.saturating_add(other.verified);
+        self.contradiction = self.contradiction.saturating_add(other.contradiction);
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct SemanticLink {
     /// Net association: positive support, negative opposition. Not a probability.
     pub weight: f32,
+    pub evidence: RelationEvidence,
     usefulness: f32,
     last_seen: u64,
 }
@@ -61,6 +101,7 @@ pub struct SemanticStore {
     structural_tokens: BTreeSet<String>,
     structural_profiles: BTreeMap<String, StructuralProfile>,
     structural_edges: BTreeMap<(String, String, String), StructuralEdge>,
+    relation_patterns: Vec<RelationPattern>,
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +132,14 @@ pub struct StructuralEdge {
     pub evidence: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct RelationPattern {
+    pub id: usize,
+    pub members: BTreeSet<(String, String)>,
+    pub signature: [f32; 5],
+    pub confidence: f32,
+}
+
 impl Default for SemanticStore {
     fn default() -> Self {
         Self::new()
@@ -112,6 +161,7 @@ impl SemanticStore {
             structural_tokens: BTreeSet::new(),
             structural_profiles: BTreeMap::new(),
             structural_edges: BTreeMap::new(),
+            relation_patterns: Vec::new(),
         }
     }
 
@@ -159,7 +209,7 @@ impl SemanticStore {
         // Collect undirected candidate associations. A parent that does not
         // know an edge contributes no evidence, so a cultural link needs to
         // be strong enough in at least one lineage to survive.
-        let mut merged = BTreeMap::<(String, String), (f32, u32)>::new();
+        let mut merged = BTreeMap::<(String, String), (f32, u32, RelationEvidence)>::new();
         for parent in parents {
             for (left, neighbours) in &parent.links {
                 for (right, link) in neighbours {
@@ -172,14 +222,15 @@ impl SemanticStore {
                     let entry = merged.entry((left.clone(), right.clone())).or_default();
                     entry.0 += link.weight;
                     entry.1 += 1;
+                    entry.2.merge(&link.evidence);
                 }
             }
         }
         let mut candidates: Vec<_> = merged
             .into_iter()
-            .filter_map(|((left, right), (total, count))| {
+            .filter_map(|((left, right), (total, count, evidence))| {
                 let weight = 0.82 * total / count as f32;
-                (weight.abs() >= 0.015).then_some((left, right, weight))
+                (weight.abs() >= 0.015).then_some((left, right, weight, evidence))
             })
             .collect();
         candidates.sort_by(|left, right| {
@@ -189,7 +240,7 @@ impl SemanticStore {
                 .partial_cmp(&left.2.abs())
                 .unwrap_or(Ordering::Equal)
         });
-        for (left, right, weight) in candidates {
+        for (left, right, weight, evidence) in candidates {
             if child.links.get(&left).map_or(0, BTreeMap::len) >= MAX_DEGREE
                 || child.links.get(&right).map_or(0, BTreeMap::len) >= MAX_DEGREE
             {
@@ -201,6 +252,7 @@ impl SemanticStore {
                 right.clone(),
                 SemanticLink {
                     weight,
+                    evidence: evidence.clone(),
                     usefulness,
                     last_seen: 0,
                 },
@@ -209,6 +261,7 @@ impl SemanticStore {
                 left,
                 SemanticLink {
                     weight,
+                    evidence,
                     usefulness: reverse_usefulness,
                     last_seen: 0,
                 },
@@ -265,6 +318,21 @@ impl SemanticStore {
 
     pub fn structural_edges(&self) -> Vec<StructuralEdge> {
         self.structural_edges.values().cloned().collect()
+    }
+
+    pub fn relation_patterns(&self) -> &[RelationPattern] {
+        &self.relation_patterns
+    }
+
+    pub fn pattern_for_pair(&self, left: &str, right: &str) -> Option<&RelationPattern> {
+        self.relation_patterns.iter().find(|pattern| {
+            pattern
+                .members
+                .contains(&(left.to_string(), right.to_string()))
+                || pattern
+                    .members
+                    .contains(&(right.to_string(), left.to_string()))
+        })
     }
 
     /// Mean entropy and family coverage for tokens that have crossed the
@@ -450,9 +518,34 @@ impl SemanticStore {
         self.links.get(left)?.get(right).map(|link| link.weight)
     }
 
+    /// Evidence dimensions let higher layers discover relation patterns from
+    /// how a link was learned, without naming linguistic parts in advance.
+    pub fn relation_evidence(&self, left: &str, right: &str) -> Option<RelationEvidence> {
+        self.links
+            .get(left)
+            .and_then(|neighbours| neighbours.get(right))
+            .map(|link| link.evidence.clone())
+    }
+
     /// Add signed evidence. A negative update weakens support and can eventually
     /// reverse it; a single rejection is not a permanent logical prohibition.
     pub fn link(&mut self, left: &str, right: &str, weight: f32, rng: &mut Rng) {
+        let kind = if weight < 0.0 {
+            RelationEvidenceKind::Contradiction
+        } else {
+            RelationEvidenceKind::Cooccurrence
+        };
+        self.link_evidence(left, right, weight, kind, rng);
+    }
+
+    pub fn link_evidence(
+        &mut self,
+        left: &str,
+        right: &str,
+        weight: f32,
+        kind: RelationEvidenceKind,
+        rng: &mut Rng,
+    ) {
         if !weight.is_finite()
             || weight == 0.0
             || left.is_empty()
@@ -473,6 +566,11 @@ impl SemanticStore {
         let reverse_usefulness = self.usefulness(right, left);
         let link = SemanticLink {
             weight,
+            evidence: {
+                let mut evidence = RelationEvidence::default();
+                evidence.observe(kind.clone());
+                evidence
+            },
             usefulness,
             last_seen: self.tick,
         };
@@ -482,6 +580,7 @@ impl SemanticStore {
             .entry(right.to_string())
             .and_modify(|entry| {
                 entry.weight += weight;
+                entry.evidence.observe(kind.clone());
                 entry.usefulness = usefulness;
                 entry.last_seen = self.tick;
             })
@@ -492,6 +591,7 @@ impl SemanticStore {
             .entry(left.to_string())
             .and_modify(|entry| {
                 entry.weight += weight;
+                entry.evidence.observe(kind);
                 entry.usefulness = reverse_usefulness;
                 entry.last_seen = self.tick;
             })
@@ -688,7 +788,81 @@ impl SemanticStore {
             self.detect_families();
             self.reinforce_families();
             self.decay_families();
+            self.detect_relation_patterns();
+            self.reinforce_relation_patterns();
         }
+    }
+
+    /// Repeated evidence signatures become a compact retention scaffold.
+    /// This boosts only existing pattern members; it does not invent links.
+    fn reinforce_relation_patterns(&mut self) {
+        let members: Vec<_> = self
+            .relation_patterns
+            .iter()
+            .flat_map(|pattern| pattern.members.iter().cloned())
+            .collect();
+        for (left, right) in members {
+            if let Some(link) = self
+                .links
+                .get_mut(&left)
+                .and_then(|links| links.get_mut(&right))
+            {
+                link.weight = (link.weight * 1.015).clamp(-8.0, 8.0);
+            }
+            if let Some(link) = self
+                .links
+                .get_mut(&right)
+                .and_then(|links| links.get_mut(&left))
+            {
+                link.weight = (link.weight * 1.015).clamp(-8.0, 8.0);
+            }
+        }
+    }
+
+    fn detect_relation_patterns(&mut self) {
+        let mut buckets: BTreeMap<[u8; 5], BTreeSet<(String, String)>> = BTreeMap::new();
+        for (left, neighbours) in &self.links {
+            for (right, link) in neighbours {
+                if left >= right || pattern_token(left) || pattern_token(right) {
+                    continue;
+                }
+                let counts = [
+                    link.evidence.cooccurrence,
+                    link.evidence.ordered,
+                    link.evidence.predictive,
+                    link.evidence.verified,
+                    link.evidence.contradiction,
+                ];
+                let total: u32 = counts.iter().sum();
+                if total < 4 {
+                    continue;
+                }
+                let key = counts.map(|count| ((count as f32 / total as f32) * 4.0).round() as u8);
+                buckets
+                    .entry(key)
+                    .or_default()
+                    .insert((left.clone(), right.clone()));
+            }
+        }
+        self.relation_patterns = buckets
+            .into_iter()
+            .filter_map(|(key, members)| {
+                let signature = key.map(|value| value as f32 / 4.0);
+                (members.len() >= 3).then_some(RelationPattern {
+                    id: 0,
+                    signature,
+                    confidence: (members.len() as f32 / 12.0).min(1.0)
+                        * (0.25 + 0.75 * (signature[2] + signature[3])),
+                    members,
+                })
+            })
+            .take(64)
+            .enumerate()
+            .map(|(id, mut pattern)| {
+                pattern.id = id;
+                pattern
+            })
+            .collect();
     }
 
     /// Detect compact, frequently used linked components.  The graph gate is
@@ -899,25 +1073,13 @@ impl SemanticStore {
     }
 
     fn decay_links(&mut self) {
-        let tokens: Vec<_> = self.links.keys().cloned().collect();
-        for token in tokens {
-            let remove: Vec<_> = self
-                .links
-                .get_mut(&token)
-                .map(|neighbours| {
-                    neighbours.retain(|_, link| {
-                        link.weight *= 0.995;
-                        link.weight.abs() >= 1e-4
-                    });
-                    neighbours.is_empty().then_some(token.clone())
-                })
-                .flatten()
-                .into_iter()
-                .collect();
-            for token in remove {
-                self.links.remove(&token);
-            }
-        }
+        self.links.retain(|_, neighbours| {
+            neighbours.retain(|_, link| {
+                link.weight *= 0.995;
+                link.weight.abs() >= 1e-4
+            });
+            !neighbours.is_empty()
+        });
     }
 
     fn decay_cooldowns(&mut self) {
@@ -1034,15 +1196,19 @@ fn normalised_entropy(distribution: &BTreeMap<String, u32>) -> f32 {
 fn identity_like(token: &str) -> bool {
     token
         .strip_prefix('a')
-        .is_some_and(|suffix| suffix.chars().all(char::is_numeric))
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(char::is_numeric))
         || token
             .strip_prefix("agent_")
-            .is_some_and(|suffix| suffix.chars().all(char::is_numeric))
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(char::is_numeric))
+}
+
+fn pattern_token(token: &str) -> bool {
+    identity_like(token) || token.starts_with("pattern_") || token == "r0"
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SemanticFamily, SemanticStore};
+    use super::{RelationEvidenceKind, SemanticFamily, SemanticStore};
     use crate::model::Rng;
     use ndarray::Array1;
     use std::collections::BTreeSet;
@@ -1062,6 +1228,38 @@ mod tests {
         let tokens = ["hot".into(), "cold".into()].into_iter().collect();
         let child = SemanticStore::inherit_from([&store, &store, &store], &tokens, &mut rng);
         assert!(child.association("hot", "cold").unwrap() < 0.0);
+    }
+
+    #[test]
+    fn links_retain_operational_evidence_kinds() {
+        let mut rng = Rng::new(145);
+        let mut store = SemanticStore::new();
+        store.link("nightingale", "bird", 0.2, &mut rng);
+        store.link_evidence(
+            "nightingale",
+            "bird",
+            0.1,
+            RelationEvidenceKind::Verified,
+            &mut rng,
+        );
+        store.link_evidence(
+            "nightingale",
+            "tree",
+            -0.1,
+            RelationEvidenceKind::Contradiction,
+            &mut rng,
+        );
+        let bird = store.relation_evidence("nightingale", "bird").unwrap();
+        assert_eq!(bird.cooccurrence, 1);
+        assert_eq!(bird.verified, 1);
+        assert_eq!(store.relation_evidence("bird", "nightingale"), Some(bird));
+        assert_eq!(
+            store
+                .relation_evidence("nightingale", "tree")
+                .unwrap()
+                .contradiction,
+            1
+        );
     }
 
     #[test]
@@ -1090,6 +1288,14 @@ mod tests {
         );
         assert_eq!(store.link_count(), 1);
         assert!(store.vector("bel").is_some());
+    }
+
+    #[test]
+    fn only_numbered_agent_tokens_are_identity_like() {
+        assert!(!super::identity_like("a"));
+        assert!(!super::identity_like("agent_"));
+        assert!(super::identity_like("a12"));
+        assert!(super::identity_like("agent_12"));
     }
 
     #[test]

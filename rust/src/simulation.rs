@@ -16,7 +16,7 @@ use crate::language::{
     repair_dialogue,
 };
 use crate::lexicon::CommunityLexicon;
-use crate::model::{Agent, Rng, WorldModel};
+use crate::model::{Agent, Rng, WorldModel, two_agents};
 use crate::phase3::{Phase3Runtime, SandboxSpec, Scope};
 use crate::reading::ReadingBridge;
 use crate::semantics::{configure_semantic_dimensions, semantic_dimensions};
@@ -42,7 +42,7 @@ pub struct Coordinator {
     dictionary: HumanDictionary,
     tasks: TaskEngine,
     capability_lab: crate::capabilities::CapabilityLab,
-    machine_lab: crate::machine::MachineLab,
+    capability_enabled: bool,
     inquiry_lab: crate::inquiry::InquiryLab,
     community_semantics: CommunitySemanticMap,
     phase3: Phase3Runtime,
@@ -50,6 +50,11 @@ pub struct Coordinator {
     discomfort: f64,
     quiet_streak: usize,
     unresolved_concepts: BTreeMap<String, UnresolvedConcept>,
+    masked_window: Vec<(bool, bool, bool, bool)>,
+    masked_history: Vec<(f32, f32, f32, f32)>,
+    masked_heldout_trials: usize,
+    masked_heldout_correct: usize,
+    whiteboard_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -111,9 +116,6 @@ struct SandboxMetrics {
 }
 
 impl Coordinator {
-    pub fn machine_won(&self) -> bool {
-        self.machine_lab.won
-    }
     pub fn new(options: RunOptions) -> io::Result<Self> {
         if let Some(dimensions) = options.dimensions {
             configure_semantic_dimensions(dimensions)
@@ -122,6 +124,7 @@ impl Coordinator {
         let workspace_root = workspace_root();
         let seed = options.seed.unwrap_or_else(seed_from_clock);
         let run_dir = create_run_dir(&workspace_root.join("rust/runs"), seed)?;
+        let whiteboard_path = run_dir.join("whiteboard.log");
         let report_path = run_dir.join("generation_report.txt");
         let metrics_path = run_dir.join("cultural_log.csv");
         let dialogue_path = run_dir.join("dialogue_log.txt");
@@ -147,6 +150,7 @@ impl Coordinator {
             })
             .collect::<Vec<_>>();
         let mut community_semantics = CommunitySemanticMap::default();
+        let mut reading = ReadingBridge::load(&workspace_root);
         let community_memory_status = if options.use_community_memory {
             community_memory::restore(
                 &community_memory_path,
@@ -158,6 +162,25 @@ impl Coordinator {
         } else {
             MemoryStatus::default()
         };
+        if options.use_community_memory {
+            let reading_path = community_memory_path.with_extension("reading.json");
+            if let Ok(text) = fs::read_to_string(reading_path)
+                && let Ok(value) = serde_json::from_str(&text)
+            {
+                reading.restore_memory_value(&value);
+            }
+        }
+        let mut inquiry_lab = crate::inquiry::InquiryLab::default();
+        let inquiry_path = community_memory_path.with_extension("inquiry.json");
+        inquiry_lab.start(
+            &mut agents,
+            &mut reading,
+            options
+                .use_community_memory
+                .then_some(inquiry_path.as_path()),
+            &run_dir,
+        )?;
+        println!("Inquiry memory: {}", inquiry_lab.memory_status());
         fs::write(
             run_dir.join("metadata.json"),
             format!(
@@ -192,20 +215,29 @@ impl Coordinator {
             lexicon,
             world: WorldModel::default(),
             conversation: Conversation::new(options.converse_path),
-            reading: ReadingBridge::load(&workspace_root),
+            reading,
             dictionary: HumanDictionary::discover(&workspace_root),
             tasks: TaskEngine::default(),
             capability_lab: crate::capabilities::CapabilityLab::new(options.capability_limit)
                 .with_teaching(options.capability_teaching),
-            machine_lab: crate::machine::MachineLab::new(seed),
-            inquiry_lab: crate::inquiry::InquiryLab::default(),
+            capability_enabled: options.capability_enabled,
+            inquiry_lab,
             community_semantics,
             phase3,
             rng,
             discomfort: 0.0,
             quiet_streak: 0,
             unresolved_concepts: BTreeMap::new(),
+            masked_window: Vec::new(),
+            masked_history: Vec::new(),
+            masked_heldout_trials: 0,
+            masked_heldout_correct: 0,
+            whiteboard_path,
         })
+    }
+
+    fn capability_lab_enabled(&self) -> bool {
+        self.capability_enabled
     }
 
     pub fn run_generation(&mut self) -> io::Result<()> {
@@ -221,20 +253,36 @@ impl Coordinator {
         action_metrics.curiosity_links = curiosity.linked;
         action_metrics.curiosity_retries = curiosity.retried;
         let sandbox_metrics = self.run_sandbox_steps();
-        self.community_semantics.update(&self.agents);
-        let alignment_metrics = self
-            .community_semantics
-            .repair_tasks(&mut self.agents, &mut self.rng);
+        // Reconciling every growing agent graph is far more expensive than a
+        // single generation of learning. The map is a durable scaffold, not a
+        // real-time control loop, and semantic family detection already runs
+        // on this cadence. Keep agent learning per-generation while batching
+        // the shared reconciliation work.
+        let alignment_metrics = if self.generation.is_multiple_of(5) {
+            self.community_semantics.update(&self.agents);
+            self.community_semantics
+                .repair_tasks(&mut self.agents, &mut self.rng)
+        } else {
+            AlignmentMetrics {
+                community_tokens: self.community_semantics.len(),
+                community_relationships: self.community_semantics.relationship_count(),
+                ..AlignmentMetrics::default()
+            }
+        };
         self.recover_agents();
-        self.capability_lab
-            .tick(&mut self.agents, self.generation, self.seed, &self.run_dir)?;
-        self.machine_lab
-            .tick(&mut self.agents, self.generation, &self.run_dir)?;
+        if self.capability_lab_enabled() {
+            self.capability_lab.tick(
+                &mut self.agents,
+                self.generation,
+                self.seed,
+                &self.run_dir,
+            )?;
+        }
         self.inquiry_lab.tick(
             &mut self.agents,
             self.generation,
             &mut self.rng,
-            &self.reading,
+            &mut self.reading,
             &self.run_dir,
         )?;
         let evolution_metrics = evolve(
@@ -252,6 +300,11 @@ impl Coordinator {
             &mut self.agents,
             &mut self.rng,
         )?;
+        self.run_claim_backchannel()?;
+        self.run_whiteboard()?;
+        self.run_language_studio()?;
+        self.run_masked_prediction()?;
+        self.write_claim_monitor()?;
         if let Some(topic) = self.conversation.take_resolved_question_topic() {
             self.unresolved_concepts.remove(&topic);
         }
@@ -275,7 +328,7 @@ impl Coordinator {
         } else {
             self.quiet_streak += 1;
         }
-        if self.quiet_streak >= 3 && self.generation % self.reading_cadence() == 0 {
+        if self.quiet_streak >= 3 && self.generation.is_multiple_of(self.reading_cadence()) {
             self.run_reading_cycle()?;
         }
         self.update_discomfort(reply.is_some());
@@ -299,11 +352,78 @@ impl Coordinator {
             &alignment_metrics,
         )?;
         self.persist_community_memory()?;
+        if self.generation.is_multiple_of(20) {
+            self.save_inquiry_memory()?;
+        }
         Ok(())
+    }
+
+    fn run_whiteboard(&mut self) -> io::Result<()> {
+        if self.agents.is_empty() {
+            return Ok(());
+        }
+        let existing = fs::read_to_string(&self.whiteboard_path).unwrap_or_default();
+        let recent: Vec<_> = existing.lines().rev().take(10).collect();
+        let writer = &self.agents[self.generation % self.agents.len()];
+        // Read message bodies only: generation and identity are transport
+        // metadata, never semantic tokens or independent supporting evidence.
+        let mut words = Vec::new();
+        for line in &recent {
+            let Some((_, body)) = line.split_once(": ") else {
+                continue;
+            };
+            let context = crate::reading::tokenise(body);
+            if context.is_empty() {
+                continue;
+            }
+            let tail = &context[context.len().saturating_sub(3)..];
+            let candidate = writer.learning.compose(tail, 4);
+            if candidate.len() > tail.len() {
+                words = candidate;
+                break;
+            }
+        }
+        if words.is_empty() {
+            words = self.inquiry_lab.propose(writer, &mut self.rng);
+        }
+        if words.len() < 2 {
+            return Ok(());
+        }
+        if degenerate_board_message(&words) {
+            return Ok(());
+        }
+        let proposal = words.join(" ");
+        if recent.iter().any(|line| {
+            line.split_once(": ")
+                .is_some_and(|(_, body)| body == proposal)
+        }) {
+            return Ok(());
+        }
+        // Practising a hypothesis is not observing it in the world. Board
+        // text conditions the next proposal, but is never re-ingested as fact.
+        let mut lines: Vec<_> = existing.lines().map(str::to_owned).collect();
+        lines.push(format!(
+            "Gen {} A{}: {}",
+            self.generation, writer.id, proposal
+        ));
+        if lines.len() > 200 {
+            lines.drain(..lines.len() - 200);
+        }
+        fs::write(&self.whiteboard_path, lines.join("\n") + "\n")
     }
 
     pub fn question_path(&self) -> &Path {
         self.conversation.question_path()
+    }
+
+    pub fn save_inquiry_memory(&self) -> io::Result<()> {
+        if !self.community_memory_enabled {
+            return Ok(());
+        }
+        self.inquiry_lab.save(
+            &self.community_memory_path.with_extension("inquiry.json"),
+            &self.agents,
+        )
     }
 
     fn persist_community_memory(&self) -> io::Result<()> {
@@ -315,7 +435,331 @@ impl Coordinator {
             self.generation,
             &self.lexicon,
             &self.community_semantics,
+        )?;
+        fs::write(
+            self.community_memory_path.with_extension("reading.json"),
+            serde_json::to_string(&self.reading.memory_value()).expect("reading memory serialises"),
         )
+    }
+
+    /// Peer rehearsal for conversational propositions. Human-taught claims
+    /// remain evidence-backed in `WorldModel`; this only gives agents repeated
+    /// chances to express and check their learned form with one another.
+    fn run_claim_backchannel(&mut self) -> io::Result<()> {
+        let claims: Vec<_> = self
+            .world
+            .claims(200)
+            .into_iter()
+            .filter(|(subject, property, _)| {
+                self.world
+                    .claim_evidence(subject, "is", property)
+                    .is_some_and(|e| e.support >= 1 && e.contradiction == 0 && e.confidence > 0.0)
+            })
+            .collect();
+        if claims.is_empty() || self.agents.len() < 2 {
+            return Ok(());
+        }
+        let mut log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.run_dir.join("claim_backchannel.log"))?;
+        for _ in 0..3 {
+            // Prefer the less-supported end of the mature pool so the
+            // backchannel keeps testing breadth instead of amplifying one
+            // socially popular claim forever.
+            let index = if self.rng.unit() < 0.70 {
+                let tail = claims.len().min(12);
+                claims.len() - tail + self.rng.index(tail)
+            } else {
+                self.rng.index(claims.len())
+            };
+            let (subject, property, confidence) = claims[index].clone();
+            let speaker_index = self.rng.index(self.agents.len());
+            let mut listener_index = self.rng.index(self.agents.len() - 1);
+            if listener_index >= speaker_index {
+                listener_index += 1;
+            }
+            let mut tokens = vec![subject.clone(), "is".to_string()];
+            tokens.extend(crate::reading::tokenise(&property));
+            let (speaker, listener) = two_agents(&mut self.agents, speaker_index, listener_index);
+            speaker.observe(&tokens, 0.10, &mut self.rng);
+            listener.observe(&tokens, 0.16, &mut self.rng);
+            let outcome = confidence.min(1.0) * 0.08;
+            let speaker_id = speaker.id;
+            let listener_id = listener.id;
+            speaker.remember_interaction(listener.id, outcome, self.generation as u64);
+            listener.remember_interaction(speaker.id, outcome, self.generation as u64);
+            writeln!(
+                log,
+                "Gen {} A{} -> A{} [Claim; {:.2}]: {}",
+                self.generation,
+                speaker_id,
+                listener_id,
+                confidence,
+                tokens.join(" ")
+            )?;
+            if self.rng.unit() < 0.35 {
+                let evidence = self
+                    .world
+                    .claim_evidence(&subject, "is", &property)
+                    .cloned();
+                let supported = evidence
+                    .as_ref()
+                    .is_some_and(|e| e.support >= 2 && e.confidence > 0.5 && e.contradiction == 0);
+                if supported {
+                    writeln!(
+                        log,
+                        "Gen {} A{} -> A{} [Review; accepted]: support={}",
+                        self.generation,
+                        listener_id,
+                        speaker_id,
+                        evidence.unwrap().support
+                    )?;
+                } else {
+                    self.world.contradict_relation(&subject, "is", &property);
+                    writeln!(
+                        log,
+                        "Gen {} A{} -> A{} [Review; unresolved]: insufficient independent support",
+                        self.generation, listener_id, speaker_id
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_claim_monitor(&self) -> io::Result<()> {
+        let mut file = fs::File::create(self.run_dir.join("claims.html"))?;
+        writeln!(
+            file,
+            "<!doctype html><meta charset='utf-8'><title>Community claims</title><style>body{{font:16px system-ui;background:#101923;color:#e8eef5;margin:40px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:9px;border-bottom:1px solid #405064;text-align:left}}th{{color:#7dd3fc}}.bad{{color:#ff7b7b}}</style><h1>Directed community claims</h1><p>Generation {}. Claims are propositions, not raw word proximity. Only mature claims are reused for peer teaching.</p><table><tr><th>Agent</th><th>Subject</th><th>Relation</th><th>Object</th><th>Support</th><th>Contradictions</th><th>Confidence</th><th>Lineages</th></tr>",
+            self.generation
+        )?;
+        for (subject, relation, object, evidence) in self.world.claim_records(120) {
+            writeln!(
+                file,
+                "<tr><td>community</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class='bad'>{}</td><td>{:.2} ({})</td><td>{}</td></tr>",
+                subject,
+                relation,
+                object,
+                evidence.support,
+                evidence.contradiction,
+                evidence.confidence,
+                if evidence.confidence >= 2.0 {
+                    "high"
+                } else if evidence.confidence >= 1.0 {
+                    "medium"
+                } else {
+                    "low"
+                },
+                evidence.lineages
+            )?;
+        }
+        writeln!(file, "</table>")?;
+        Ok(())
+    }
+
+    fn run_language_studio(&mut self) -> io::Result<()> {
+        if self.agents.len() < 2 {
+            return Ok(());
+        }
+        let mut log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.run_dir.join("language_studio.log"))?;
+        for _ in 0..4 {
+            let speaker_index = self.rng.index(self.agents.len());
+            let mut listener_index = self.rng.index(self.agents.len() - 1);
+            if listener_index >= speaker_index {
+                listener_index += 1;
+            }
+            let vocabulary: Vec<_> = self.agents[speaker_index]
+                .vocabulary
+                .iter()
+                .cloned()
+                .collect();
+            if vocabulary.len() < 3 {
+                continue;
+            }
+            let start = self.rng.index(vocabulary.len());
+            let tokens = vec![
+                vocabulary[start].clone(),
+                vocabulary[(start + 1) % vocabulary.len()].clone(),
+                vocabulary[(start + 2) % vocabulary.len()].clone(),
+            ];
+            let (speaker, listener) = two_agents(&mut self.agents, speaker_index, listener_index);
+            listener.observe(&tokens, 0.08, &mut self.rng);
+            speaker.observe(&tokens, 0.04, &mut self.rng);
+            speaker.remember_interaction(listener.id, 0.02, self.generation as u64);
+            listener.remember_interaction(speaker.id, 0.02, self.generation as u64);
+            writeln!(
+                log,
+                "Gen {} A{} -> A{} [Studio; exploratory]: {}",
+                self.generation,
+                speaker.id,
+                listener.id,
+                tokens.join(" ")
+            )?;
+        }
+        Ok(())
+    }
+
+    fn run_masked_prediction(&mut self) -> io::Result<()> {
+        let Some((position, context, target, left, right)) =
+            self.reading.masked_trial(self.generation)
+        else {
+            return Ok(());
+        };
+        let prediction = self
+            .reading
+            .contextual_masked_prediction(position, &left, &right);
+        let novel_context = !self.reading.has_masked_context(position, &left, &right);
+        let held_out = self.reading.masked_holdout_trial(self.generation);
+        let correct = prediction.as_deref() == Some(target.as_str());
+        let family = self.reading.masked_context_family(position, &left, &right);
+        let family_correct = family.contains(&target);
+        if held_out {
+            self.masked_heldout_trials += 1;
+            if correct {
+                self.masked_heldout_correct += 1;
+            }
+        }
+        let mut log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.run_dir.join("masked_predictions.log"))?;
+        writeln!(
+            log,
+            "Gen {} held_out={} position={} context_seen={} prediction={} target={} correct={} context={}",
+            self.generation,
+            held_out,
+            position,
+            !novel_context,
+            prediction.as_deref().unwrap_or("?"),
+            target,
+            correct,
+            context.join(" ")
+        )?;
+        let candidates = self.reading.masked_candidates(position);
+        let mut agent_correct = 0usize;
+        for agent in &self.agents {
+            let choice = candidates.iter().max_by(|left, right| {
+                let score = |candidate: &String| {
+                    context
+                        .iter()
+                        .filter_map(|word| agent.semantics.association(word, candidate))
+                        .sum::<f32>()
+                };
+                score(left)
+                    .partial_cmp(&score(right))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if choice.is_some_and(|choice| choice == &target) {
+                agent_correct += 1;
+            }
+        }
+        let mut ranked: Vec<_> = candidates
+            .iter()
+            .map(|candidate| {
+                let score = self
+                    .agents
+                    .first()
+                    .map(|agent| {
+                        context
+                            .iter()
+                            .filter_map(|word| agent.semantics.association(word, candidate))
+                            .sum::<f32>()
+                    })
+                    .unwrap_or_default();
+                (candidate, score)
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let top3_correct = ranked
+            .iter()
+            .take(3)
+            .any(|(candidate, _)| *candidate == &target);
+        self.masked_window
+            .push((correct, top3_correct, family_correct, held_out && correct));
+        if self.masked_window.len() > 100 {
+            self.masked_window.remove(0);
+        }
+        let n = self.masked_window.len() as f32;
+        self.masked_history.push((
+            self.masked_window.iter().filter(|x| x.0).count() as f32 / n * 100.0,
+            self.masked_window.iter().filter(|x| x.1).count() as f32 / n * 100.0,
+            self.masked_window.iter().filter(|x| x.2).count() as f32 / n * 100.0,
+            if self.masked_heldout_trials == 0 {
+                0.0
+            } else {
+                self.masked_heldout_correct as f32 / self.masked_heldout_trials as f32 * 100.0
+            },
+        ));
+        if self.masked_history.len() > 500 {
+            self.masked_history.remove(0);
+        }
+        self.write_masked_monitor()?;
+        writeln!(
+            log,
+            "Gen {} independent_agent_accuracy={:.3} agents={}",
+            self.generation,
+            agent_correct as f32 / self.agents.len().max(1) as f32,
+            self.agents.len()
+        )?;
+        // Revealing one valid continuation supports that observation. It does
+        // not disprove all the other words that could fit this context. Avoid
+        // repeated updates and never train on a held-out trial here.
+        if !held_out {
+            for agent in &mut self.agents {
+                agent.learn_choice(&context, &target, &[], 0.10, &mut self.rng);
+            }
+        }
+        Ok(())
+    }
+
+    fn write_masked_monitor(&self) -> io::Result<()> {
+        let n = self.masked_window.len().max(1) as f32;
+        let rate = |f: fn(&(bool, bool, bool, bool)) -> bool| {
+            self.masked_window.iter().filter(|x| f(x)).count() as f32 / n * 100.0
+        };
+        let poly = |k: usize| {
+            self.masked_history
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let value = match k {
+                        0 => r.0,
+                        1 => r.1,
+                        2 => r.2,
+                        _ => r.3,
+                    };
+                    format!(
+                        "{},{}",
+                        i * 700 / self.masked_history.len().max(1),
+                        220 - (value.clamp(0.0, 100.0) * 2.0) as usize
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let html = format!(
+            "<!doctype html><meta charset='utf-8'><title>Masked transfer monitor</title><meta http-equiv='refresh' content='5'><style>body{{background:#101923;color:#e8eef5;font:18px system-ui;margin:40px}}table{{border-collapse:collapse}}td,th{{padding:12px 24px;border-bottom:1px solid #34485e}}th{{color:#7dd3fc}}svg{{background:#18283d;max-width:900px;width:100%}}.e{{stroke:#38bdf8}}.t{{stroke:#fbbf24}}.f{{stroke:#a78bfa}}.h{{stroke:#4ade80}}</style><h1>Masked prediction monitor</h1><p>Generation {} · rolling window: {} trials</p><svg viewBox='0 0 700 240'><line x1='0' y1='220' x2='700' y2='220' stroke='#64748b'/><line x1='0' y1='20' x2='700' y2='20' stroke='#64748b'/><polyline fill='none' stroke-width='3' class='e' points='{}'/><polyline fill='none' stroke-width='3' class='t' points='{}'/><polyline fill='none' stroke-width='3' class='f' points='{}'/><polyline fill='none' stroke-width='3' class='h' points='{}'/></svg><table><tr><th>Measure</th><th>Rate</th></tr><tr><td>Exact answer</td><td>{:.1}%</td></tr><tr><td>Top-3 answer</td><td>{:.1}%</td></tr><tr><td>Context-family answer</td><td>{:.1}%</td></tr><tr><td>Held-out exact transfer</td><td>{:.1}%</td></tr></table>",
+            self.generation,
+            self.masked_window.len(),
+            poly(0),
+            poly(1),
+            poly(2),
+            poly(3),
+            rate(|x| x.0),
+            rate(|x| x.1),
+            rate(|x| x.2),
+            if self.masked_heldout_trials == 0 {
+                0.0
+            } else {
+                self.masked_heldout_correct as f32 / self.masked_heldout_trials as f32 * 100.0
+            }
+        );
+        fs::write(self.run_dir.join("masked_monitor.html"), html)
     }
 
     fn run_agent_dialogues(&mut self) -> io::Result<DialogueMetrics> {
@@ -664,7 +1108,7 @@ impl Coordinator {
         for index in 0..self.agents.len() {
             self.agents[index].energy = (self.agents[index].energy + 1.0).min(100.0);
             if self.agents.len() > 1 {
-                let peer_index = distinct_index(self.agents.len(), index, &mut self.rng);
+                let peer_index = self.rng.distinct_index(self.agents.len(), index);
                 let peer_id = self.agents[peer_index].id;
                 self.agents[index].adjust_trust(peer_id, 0.01);
             }
@@ -746,7 +1190,7 @@ impl Coordinator {
         if self.agents.len() < 2 {
             return false;
         }
-        let listener_index = distinct_index(self.agents.len(), speaker_index, &mut self.rng);
+        let listener_index = self.rng.distinct_index(self.agents.len(), speaker_index);
         let (speaker, listener) = two_agents(&mut self.agents, speaker_index, listener_index);
         let signal = speaker.referent_signal("r0");
         let utterance = vec![
@@ -765,7 +1209,7 @@ impl Coordinator {
         if self.agents.len() < 2 {
             return false;
         }
-        let student_index = distinct_index(self.agents.len(), teacher_index, &mut self.rng);
+        let student_index = self.rng.distinct_index(self.agents.len(), teacher_index);
         let (teacher, student) = two_agents(&mut self.agents, teacher_index, student_index);
         teacher.teach(student, self.generation as u64, &mut self.rng)
     }
@@ -775,6 +1219,14 @@ impl Coordinator {
         if passage.is_empty() {
             return Ok(());
         }
+        self.inquiry_lab.read(
+            &mut self.agents,
+            &passage,
+            &self.reading,
+            self.generation,
+            &mut self.rng,
+            &self.run_dir,
+        )?;
         let mut log = OpenOptions::new()
             .create(true)
             .append(true)
@@ -843,6 +1295,12 @@ impl Coordinator {
             .agents
             .iter()
             .map(|agent| agent.semantics.family_count())
+            .sum::<usize>()
+            / self.agents.len();
+        let relation_patterns: usize = self
+            .agents
+            .iter()
+            .map(|agent| agent.semantics.relation_patterns().len())
             .sum::<usize>()
             / self.agents.len();
         let structural_tokens: usize = self
@@ -969,7 +1427,18 @@ impl Coordinator {
         )?;
         writeln!(
             report,
-            "Semantic links (mean): {semantic_links}; families (mean): {semantic_families}"
+            "Semantic links (mean): {semantic_links}; families (mean): {semantic_families}; recurring relationship patterns (mean): {relation_patterns}; community patterns: {}",
+            self.community_semantics.pattern_count()
+        )?;
+        writeln!(
+            report,
+            "Reading induction: latent slot families={}; masked trials are logged in masked_predictions.log",
+            self.reading.masked_slot_families().len()
+        )?;
+        writeln!(
+            report,
+            "Emergent usage roles: {} distributional signatures",
+            self.reading.role_signature_count()
         )?;
         writeln!(
             report,
@@ -1085,7 +1554,67 @@ impl Coordinator {
             alignment.repaired,
             alignment.mean_distance,
         )?;
+        self.write_relation_pattern_monitor()?;
         writeln!(report)?;
+        Ok(())
+    }
+
+    fn write_relation_pattern_monitor(&self) -> io::Result<()> {
+        let path = self.run_dir.join("relation_patterns.html");
+        let mut html = fs::File::create(path)?;
+        writeln!(
+            html,
+            "<!doctype html><meta charset='utf-8'><title>Relation patterns</title><style>body{{background:#101923;color:#e8eef5;font:16px system-ui;margin:40px}} table{{border-collapse:collapse;width:100%}} th,td{{padding:10px;border-bottom:1px solid #34485e;text-align:left}} th{{color:#7dd3fc}} code{{color:#fbbf24}}</style>"
+        )?;
+        writeln!(
+            html,
+            "<h1>Recurring relationship patterns</h1><p>Generation {}. Patterns are discovered from evidence signatures, without predefined linguistic labels.</p><table><tr><th>Agent</th><th>Signature<br>(co-occur · ordered · predicted · verified · contradicted)</th><th>Confidence</th><th>Links</th><th>Examples</th></tr>",
+            self.generation
+        )?;
+        for agent in &self.agents {
+            for pattern in agent.semantics.relation_patterns() {
+                let examples = pattern
+                    .members
+                    .iter()
+                    .take(6)
+                    .map(|(left, right)| format!("{} → {}", left, right))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                writeln!(
+                    html,
+                    "<tr><td>agent_{}</td><td>{:.2} · {:.2} · {:.2} · {:.2} · {:.2}</td><td>{:.0}%</td><td>{}</td><td><code>{}</code></td></tr>",
+                    agent.id,
+                    pattern.signature[0],
+                    pattern.signature[1],
+                    pattern.signature[2],
+                    pattern.signature[3],
+                    pattern.signature[4],
+                    pattern.confidence * 100.0,
+                    pattern.members.len(),
+                    examples
+                )?;
+            }
+        }
+        writeln!(html, "</table>")?;
+        writeln!(
+            html,
+            "<h2>Community patterns</h2><p>Patterns aggregated across independent lineages. These are the reusable community-level signatures, rather than one agent's local clusters.</p><table><tr><th>Signature</th><th>Confidence</th><th>Supporting lineages</th><th>Member links</th></tr>"
+        )?;
+        for pattern in self.community_semantics.patterns() {
+            writeln!(
+                html,
+                "<tr><td>{:.2} · {:.2} · {:.2} · {:.2} · {:.2}</td><td>{:.0}%</td><td>{}</td><td>{}</td></tr>",
+                pattern.signature[0],
+                pattern.signature[1],
+                pattern.signature[2],
+                pattern.signature[3],
+                pattern.signature[4],
+                pattern.confidence * 100.0,
+                pattern.support_lineages,
+                pattern.member_links
+            )?;
+        }
+        writeln!(html, "</table>")?;
         Ok(())
     }
 
@@ -1187,14 +1716,6 @@ impl Coordinator {
     }
 }
 
-fn distinct_index(size: usize, excluded: usize, rng: &mut Rng) -> usize {
-    let mut index = rng.index(size - 1);
-    if index >= excluded {
-        index += 1;
-    }
-    index
-}
-
 /// Prefer familiar, trustworthy partners while retaining a non-zero chance of
 /// novel encounters.  This replaces purely random pairing so pragmatics can
 /// form locally before a convention is carried through the population.
@@ -1240,15 +1761,11 @@ fn select_dialogue_partner(agents: &[Agent], speaker: usize, rng: &mut Rng) -> u
     *candidates.last().expect("population has a partner")
 }
 
-fn two_agents(agents: &mut [Agent], left: usize, right: usize) -> (&mut Agent, &mut Agent) {
-    assert_ne!(left, right);
-    if left < right {
-        let (head, tail) = agents.split_at_mut(right);
-        (&mut head[left], &mut tail[0])
-    } else {
-        let (head, tail) = agents.split_at_mut(left);
-        (&mut tail[0], &mut head[right])
-    }
+/// Generated board text is practice, not evidence. Reject obvious copying
+/// loops before they become the next writer's prompt.
+fn degenerate_board_message(words: &[String]) -> bool {
+    words.windows(2).any(|pair| pair[0] == pair[1])
+        || words.windows(4).any(|window| window[..2] == window[2..])
 }
 
 fn workspace_root() -> PathBuf {

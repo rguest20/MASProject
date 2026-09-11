@@ -11,8 +11,10 @@ use crate::semantics::SemanticStore;
 
 #[derive(Clone, Debug)]
 pub struct Agent {
+    /// Source-grounded predictive experience. Inherited evidence keeps its ID,
+    /// so copying it through a peer or child cannot create extra observations.
+    pub learning: crate::learning::EvidenceMemory,
     pub capabilities: crate::capabilities::CapabilityMemory,
-    pub machine: crate::machine::MachineMemory,
     pub id: usize,
     /// Stable biological/cultural identity. `id` is a reusable population
     /// slot; this value is never reused and is safe for lineage accounting.
@@ -56,8 +58,8 @@ pub struct Agent {
 impl Agent {
     pub fn new(id: usize, rng: &mut Rng) -> Self {
         Self {
+            learning: crate::learning::EvidenceMemory::default(),
             capabilities: crate::capabilities::CapabilityMemory::default(),
-            machine: crate::machine::MachineMemory::default(),
             id,
             lineage_id: id as u64,
             identity_token: format!("agent_{id}"),
@@ -91,6 +93,68 @@ impl Agent {
     pub fn observe(&mut self, words: &[String], gain: f32, rng: &mut Rng) {
         self.vocabulary.extend(words.iter().cloned());
         self.semantics.observe(words, gain, rng);
+        // Preserve local order as a separate signal from undirected
+        // co-occurrence. Higher layers can discover directional conventions
+        // without being handed grammatical labels.
+        for pair in words.windows(2) {
+            if let [left, right] = pair {
+                self.semantics.link_evidence(
+                    left,
+                    right,
+                    gain.abs().max(0.001),
+                    crate::semantics::RelationEvidenceKind::Ordered,
+                    rng,
+                );
+            }
+        }
+    }
+
+    /// Task-agnostic choice learning. A context can reward one candidate and
+    /// attach negative evidence to alternatives without assuming what the
+    /// task means (reading, dialogue, inquiry, or capability practice).
+    pub fn learn_choice(
+        &mut self,
+        context: &[String],
+        candidate: &str,
+        alternatives: &[String],
+        reward: f32,
+        rng: &mut Rng,
+    ) {
+        if !reward.is_finite() || reward == 0.0 {
+            return;
+        }
+        let strength = reward.abs();
+        for token in context {
+            self.semantics.link_evidence(
+                token,
+                candidate,
+                reward,
+                if reward > 0.0 {
+                    crate::semantics::RelationEvidenceKind::Predictive
+                } else {
+                    crate::semantics::RelationEvidenceKind::Contradiction
+                },
+                rng,
+            );
+        }
+        // Alternatives are penalised only when the candidate is confirmed.
+        // Rejecting one candidate says nothing about the remaining choices.
+        if reward < 0.0 {
+            return;
+        }
+        for alternative in alternatives {
+            if alternative != candidate {
+                for token in context {
+                    self.semantics.link_evidence(
+                        token,
+                        alternative,
+                        -strength * 0.5,
+                        crate::semantics::RelationEvidenceKind::Contradiction,
+                        rng,
+                    );
+                }
+            }
+        }
     }
 
     pub fn referent_signal(&self, referent: &str) -> String {
@@ -297,8 +361,18 @@ fn unique_inverse<'a>(lexicon: &'a BTreeMap<String, String>, signal: &str) -> Op
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct ClaimEvidence {
+    pub support: u32,
+    pub contradiction: u32,
+    pub confidence: f64,
+    pub lineages: u32,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct WorldModel {
     facts: BTreeMap<String, BTreeMap<String, f64>>,
+    relations: BTreeMap<(String, String), BTreeMap<String, f64>>,
+    claim_evidence: BTreeMap<(String, String, String), ClaimEvidence>,
 }
 
 impl WorldModel {
@@ -312,6 +386,99 @@ impl WorldModel {
             .or_default()
             .entry(property.to_string())
             .or_default() += confidence;
+        self.observe_relation(subject, "is", property, confidence);
+    }
+
+    pub fn observe_relation(
+        &mut self,
+        subject: &str,
+        relation: &str,
+        object: &str,
+        confidence: f64,
+    ) {
+        if subject.is_empty() || relation.is_empty() || object.is_empty() {
+            return;
+        }
+        *self
+            .relations
+            .entry((subject.to_string(), relation.to_string()))
+            .or_default()
+            .entry(object.to_string())
+            .or_default() += confidence;
+        let evidence = self
+            .claim_evidence
+            .entry((subject.into(), relation.into(), object.into()))
+            .or_default();
+        evidence.support = evidence.support.saturating_add(1);
+        evidence.lineages = evidence.lineages.max(1);
+        evidence.confidence = (evidence.confidence + confidence).clamp(-10.0, 10.0);
+    }
+
+    pub fn contradict_relation(&mut self, subject: &str, relation: &str, object: &str) {
+        let evidence = self
+            .claim_evidence
+            .entry((subject.into(), relation.into(), object.into()))
+            .or_default();
+        evidence.contradiction = evidence.contradiction.saturating_add(1);
+        evidence.confidence = (evidence.confidence - 0.5).clamp(-10.0, 10.0);
+    }
+
+    pub fn claim_evidence(
+        &self,
+        subject: &str,
+        relation: &str,
+        object: &str,
+    ) -> Option<&ClaimEvidence> {
+        self.claim_evidence.get(&(
+            subject.to_string(),
+            relation.to_string(),
+            object.to_string(),
+        ))
+    }
+
+    pub fn claim_records(&self, limit: usize) -> Vec<(String, String, String, ClaimEvidence)> {
+        let mut records: Vec<_> = self
+            .claim_evidence
+            .iter()
+            .map(|((subject, relation, object), evidence)| {
+                (
+                    subject.clone(),
+                    relation.clone(),
+                    object.clone(),
+                    evidence.clone(),
+                )
+            })
+            .collect();
+        records.sort_by(|left, right| {
+            right
+                .3
+                .confidence
+                .partial_cmp(&left.3.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        records.truncate(limit);
+        records
+    }
+
+    pub fn relation(&self, subject: &str, relation: &str) -> Option<&str> {
+        self.relations
+            .get(&(subject.to_string(), relation.to_string()))?
+            .iter()
+            .max_by(|left, right| {
+                left.1
+                    .partial_cmp(right.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(object, _)| object.as_str())
+    }
+
+    pub fn relation_subject(&self, relation: &str, object: &str) -> Option<&str> {
+        self.relations
+            .iter()
+            .filter_map(|((subject, rel), objects)| {
+                (rel == relation && objects.contains_key(object)).then_some(subject.as_str())
+            })
+            .next()
     }
 
     pub fn fact(&self, subject: &str) -> Option<&str> {
@@ -328,6 +495,27 @@ impl WorldModel {
 
     pub fn count(&self) -> usize {
         self.facts.values().map(BTreeMap::len).sum()
+    }
+
+    /// Bounded evidence-backed propositions available for peer rehearsal.
+    pub fn claims(&self, limit: usize) -> Vec<(String, String, f64)> {
+        let mut claims: Vec<_> = self
+            .facts
+            .iter()
+            .flat_map(|(subject, properties)| {
+                properties
+                    .iter()
+                    .map(|(property, confidence)| (subject.clone(), property.clone(), *confidence))
+            })
+            .collect();
+        claims.sort_by(|left, right| {
+            right
+                .2
+                .partial_cmp(&left.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        claims.truncate(limit);
+        claims
     }
 }
 
@@ -358,5 +546,51 @@ impl Rng {
 
     pub fn unit(&mut self) -> f64 {
         self.next_u64() as f64 / u64::MAX as f64
+    }
+
+    pub fn distinct_index(&mut self, size: usize, excluded: usize) -> usize {
+        assert!(size > 1, "distinct index requires at least two choices");
+        let mut index = self.index(size - 1);
+        if index >= excluded {
+            index += 1;
+        }
+        index
+    }
+
+    pub fn pair(&mut self, size: usize) -> (usize, usize) {
+        let left = self.index(size);
+        (left, self.distinct_index(size, left))
+    }
+}
+
+pub fn two_agents(agents: &mut [Agent], left: usize, right: usize) -> (&mut Agent, &mut Agent) {
+    assert_ne!(left, right);
+    if left < right {
+        let (head, tail) = agents.split_at_mut(right);
+        (&mut head[left], &mut tail[0])
+    } else {
+        let (head, tail) = agents.split_at_mut(left);
+        (&mut tail[0], &mut head[right])
+    }
+}
+
+#[cfg(test)]
+mod learning_tests {
+    use super::*;
+
+    #[test]
+    fn negative_feedback_weakens_only_the_rejected_choice() {
+        let mut rng = Rng::new(724);
+        let mut agent = Agent::new(0, &mut rng);
+        let context = vec!["prompt".to_string()];
+        agent.learn_choice(&context, "bad", &["good".into()], -0.2, &mut rng);
+        assert!(agent.semantics.association("prompt", "bad").unwrap() < 0.0);
+        assert!(agent.semantics.association("prompt", "good").is_none());
+        let evidence = agent.semantics.relation_evidence("prompt", "bad").unwrap();
+        assert_eq!(evidence.predictive, 0);
+        assert_eq!(evidence.contradiction, 1);
+        agent.learn_choice(&context, "good", &["other".into()], 0.2, &mut rng);
+        assert!(agent.semantics.association("prompt", "good").unwrap() > 0.0);
+        assert!(agent.semantics.association("prompt", "other").unwrap() < 0.0);
     }
 }

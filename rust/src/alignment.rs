@@ -1,10 +1,10 @@
 //! Confidence-gated community semantic centroids and repair tasks.
 
+use serde_json::{Value, json};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ndarray::Array1;
-use serde_json::{Value, json};
 
 use crate::model::{Agent, Rng};
 use crate::semantics::semantic_dimensions;
@@ -30,13 +30,23 @@ pub struct CommunityRelationship {
     pub coverage: f32,
     pub confidence: f32,
     pub count: usize,
+    pub evidence: [u32; 5],
     age: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommunityPattern {
+    pub signature: [f32; 5],
+    pub support_lineages: usize,
+    pub member_links: usize,
+    pub confidence: f32,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct CommunitySemanticMap {
     tokens: BTreeMap<String, CommunityToken>,
     relationships: BTreeMap<(String, String), CommunityRelationship>,
+    patterns: BTreeMap<[u8; 5], CommunityPattern>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -49,7 +59,8 @@ pub struct AlignmentMetrics {
 }
 
 impl CommunitySemanticMap {
-    const MAX_TOKENS: usize = 512;
+    const BASE_TOKEN_CAPACITY: usize = 512;
+    const MAX_TOKEN_CAPACITY: usize = 8_192;
     const MAX_RELATIONSHIPS: usize = 2_048;
     const MAX_RELATIONSHIPS_PER_TOKEN: usize = 12;
 
@@ -65,8 +76,67 @@ impl CommunitySemanticMap {
         self.relationships.len()
     }
 
+    pub fn pattern_count(&self) -> usize {
+        self.patterns.len()
+    }
+
+    pub fn patterns(&self) -> impl Iterator<Item = &CommunityPattern> {
+        self.patterns.values()
+    }
+
+    pub fn patterns_memory_value(&self) -> Value {
+        Value::Array(self.patterns.iter().map(|(key, p)| json!({"signature": key, "support_lineages": p.support_lineages, "member_links": p.member_links, "confidence": p.confidence})).collect())
+    }
+
+    pub fn restore_patterns_memory_value(&mut self, value: &Value) -> usize {
+        let Some(items) = value.as_array() else {
+            return 0;
+        };
+        for item in items {
+            let Some(a) = item.get("signature").and_then(Value::as_array) else {
+                continue;
+            };
+            if a.len() != 5 {
+                continue;
+            }
+            let key = [
+                a[0].as_u64().unwrap_or(0) as u8,
+                a[1].as_u64().unwrap_or(0) as u8,
+                a[2].as_u64().unwrap_or(0) as u8,
+                a[3].as_u64().unwrap_or(0) as u8,
+                a[4].as_u64().unwrap_or(0) as u8,
+            ];
+            self.patterns.insert(
+                key,
+                CommunityPattern {
+                    signature: key.map(|v| v as f32 / 4.0),
+                    support_lineages: item
+                        .get("support_lineages")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize,
+                    member_links: item
+                        .get("member_links")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize,
+                    confidence: item
+                        .get("confidence")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0) as f32,
+                },
+            );
+        }
+        self.patterns.len()
+    }
+
     pub fn update(&mut self, agents: &[Agent]) {
         let population = agents.len().max(1);
+        let mean_vocabulary = agents
+            .iter()
+            .map(|agent| agent.vocabulary.len())
+            .sum::<usize>()
+            / population;
+        let token_capacity =
+            (Self::BASE_TOKEN_CAPACITY.max(mean_vocabulary / 2)).min(Self::MAX_TOKEN_CAPACITY);
         let mut collected = BTreeMap::<String, Vec<Array1<f32>>>::new();
         for agent in agents {
             for (token, vector, _) in agent.semantics.community_candidates() {
@@ -116,7 +186,7 @@ impl CommunitySemanticMap {
         }
         self.tokens
             .retain(|_, item| item.age < 10 || item.confidence >= 0.25);
-        if self.tokens.len() > Self::MAX_TOKENS {
+        if self.tokens.len() > token_capacity {
             let mut ranked: Vec<_> = self
                 .tokens
                 .iter()
@@ -128,14 +198,39 @@ impl CommunitySemanticMap {
                     .unwrap_or(Ordering::Equal)
                     .then_with(|| right.2.cmp(&left.2))
             });
-            for (token, _, _) in ranked
-                .into_iter()
-                .take(self.tokens.len() - Self::MAX_TOKENS)
-            {
+            for (token, _, _) in ranked.into_iter().take(self.tokens.len() - token_capacity) {
                 self.tokens.remove(&token);
             }
         }
         self.update_relationships(agents);
+        self.update_patterns(agents);
+    }
+
+    fn update_patterns(&mut self, agents: &[Agent]) {
+        let mut buckets: BTreeMap<[u8; 5], (BTreeSet<u64>, usize)> = BTreeMap::new();
+        for agent in agents {
+            for pattern in agent.semantics.relation_patterns() {
+                let key = pattern.signature.map(|value| (value * 4.0).round() as u8);
+                let entry = buckets.entry(key).or_default();
+                entry.0.insert(agent.lineage_id);
+                entry.1 += pattern.members.len();
+            }
+        }
+        self.patterns = buckets
+            .into_iter()
+            .filter_map(|(key, (lineages, links))| {
+                (lineages.len() >= 2).then_some((
+                    key,
+                    CommunityPattern {
+                        signature: key.map(|value| value as f32 / 4.0),
+                        support_lineages: lineages.len(),
+                        member_links: links,
+                        confidence: ((lineages.len() as f32 / agents.len().max(1) as f32).min(1.0)
+                            * (0.25 + 0.75 * (key[2] as f32 + key[3] as f32) / 4.0)),
+                    },
+                ))
+            })
+            .collect();
     }
 
     pub fn repair_tasks(&self, agents: &mut [Agent], rng: &mut Rng) -> AlignmentMetrics {
@@ -203,12 +298,25 @@ impl CommunitySemanticMap {
             relationship.age += 1;
         }
         let population = agents.len().max(1);
-        let mut collected = BTreeMap::<(String, String), Vec<f32>>::new();
+        let mut collected = BTreeMap::<(String, String), Vec<(f32, [u32; 5])>>::new();
         for agent in agents {
             for (left, right, weight) in agent.semantics.community_link_candidates() {
                 let key = (left, right);
                 if self.tokens.contains_key(&key.0) && self.tokens.contains_key(&key.1) {
-                    collected.entry(key).or_default().push(weight);
+                    let evidence = agent
+                        .semantics
+                        .relation_evidence(&key.0, &key.1)
+                        .map(|e| {
+                            [
+                                e.cooccurrence,
+                                e.ordered,
+                                e.predictive,
+                                e.verified,
+                                e.contradiction,
+                            ]
+                        })
+                        .unwrap_or([0; 5]);
+                    collected.entry(key).or_default().push((weight, evidence));
                 }
             }
         }
@@ -217,15 +325,24 @@ impl CommunitySemanticMap {
             if coverage < 0.25 {
                 continue;
             }
-            let mean_strength = weights.iter().sum::<f32>() / weights.len() as f32;
+            let mean_strength =
+                weights.iter().map(|(weight, _)| weight).sum::<f32>() / weights.len() as f32;
+            let mut evidence = [0u32; 5];
+            for (_, local) in &weights {
+                for (total, observed) in evidence.iter_mut().zip(local) {
+                    *total = total.saturating_add(*observed);
+                }
+            }
             if mean_strength.abs() < 0.05 {
                 // Conflicting current evidence must not preserve stale consensus.
                 self.relationships.remove(&(left, right));
                 continue;
             }
-            let confidence = (0.65 * coverage
+            let typed_support = (evidence[1] + evidence[2] + evidence[3]) as f32;
+            let contradictions = evidence[4] as f32;
+            let confidence = (0.55 * coverage
                 + 0.35 * (mean_strength.abs() / (mean_strength.abs() + 0.25)))
-                .clamp(0.0, 1.0);
+                + 0.10 * (typed_support / (typed_support + contradictions + 1.0)).clamp(0.0, 1.0);
             let alpha = 0.04 + 0.20 * confidence;
             self.relationships
                 .entry((left.clone(), right.clone()))
@@ -234,6 +351,7 @@ impl CommunitySemanticMap {
                     current.coverage = coverage;
                     current.confidence = confidence;
                     current.count = weights.len();
+                    current.evidence = evidence;
                     current.age = 0;
                 })
                 .or_insert(CommunityRelationship {
@@ -243,6 +361,7 @@ impl CommunitySemanticMap {
                     coverage,
                     confidence,
                     count: weights.len(),
+                    evidence,
                     age: 0,
                 });
         }
@@ -327,6 +446,7 @@ impl CommunitySemanticMap {
                         "coverage": relationship.coverage,
                         "confidence": relationship.confidence,
                         "count": relationship.count,
+                        "evidence": relationship.evidence,
                     })
                 })
                 .collect(),
@@ -387,7 +507,7 @@ impl CommunitySemanticMap {
                 },
             );
         }
-        if restored.len() > Self::MAX_TOKENS {
+        if restored.len() > Self::MAX_TOKEN_CAPACITY {
             let mut ranked: Vec<_> = restored
                 .iter()
                 .map(|(token, item)| (token.clone(), item.confidence, item.count))
@@ -399,7 +519,7 @@ impl CommunitySemanticMap {
                     .unwrap_or(Ordering::Equal)
                     .then_with(|| right.2.cmp(&left.2))
             });
-            ranked = ranked.into_iter().take(Self::MAX_TOKENS).collect();
+            ranked = ranked.into_iter().take(Self::MAX_TOKEN_CAPACITY).collect();
             let allowed: std::collections::BTreeSet<_> =
                 ranked.into_iter().map(|(token, _, _)| token).collect();
             restored.retain(|token, _| allowed.contains(token));
@@ -450,6 +570,17 @@ impl CommunitySemanticMap {
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
                 .min(1_000_000) as usize;
+            let evidence = item
+                .get("evidence")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    let mut restored = [0u32; 5];
+                    for (index, value) in values.iter().take(5).enumerate() {
+                        restored[index] = value.as_u64().unwrap_or(0).min(1_000_000) as u32;
+                    }
+                    restored
+                })
+                .unwrap_or([0; 5]);
             if strength.abs() < 0.05 || count == 0 {
                 continue;
             }
@@ -462,6 +593,7 @@ impl CommunitySemanticMap {
                     coverage,
                     confidence,
                     count,
+                    evidence,
                     age: 0,
                 },
             );
@@ -538,7 +670,8 @@ fn centroid(vectors: &[Array1<f32>]) -> Array1<f32> {
     for vector in vectors {
         mean += vector;
     }
-    mean.mapv(|value| value / vectors.len() as f32)
+    mean.mapv_inplace(|value| value / vectors.len() as f32);
+    mean
 }
 
 fn distance(left: &Array1<f32>, right: &Array1<f32>) -> f32 {
@@ -562,6 +695,20 @@ fn cosine(left: &Array1<f32>, right: &Array1<f32>) -> f32 {
 mod tests {
     use super::CommunitySemanticMap;
     use crate::model::{Agent, Rng};
+
+    #[test]
+    fn restores_pattern_signature_at_its_original_scale() {
+        let mut map = CommunitySemanticMap::default();
+        let value = serde_json::json!([{
+            "signature": [0, 2, 1, 4, 0],
+            "support_lineages": 3,
+            "member_links": 12,
+            "confidence": 0.8
+        }]);
+        assert_eq!(map.restore_patterns_memory_value(&value), 1);
+        let pattern = map.patterns().next().expect("restored pattern");
+        assert_eq!(pattern.signature, [0.0, 0.5, 0.25, 1.0, 0.0]);
+    }
 
     #[test]
     fn negative_relationships_survive_community_round_trip_and_seeding() {
